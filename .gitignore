@@ -1,0 +1,73 @@
+# Ubuntu Bootstrap System - Git Ignore Rules
+
+# Sensitive Data (never commit plaintext secrets)
+data/encrypted_secrets.key
+data/master_password.txt
+*.key
+*.pem
+*.cert
+*_password*
+*_secret*
+*_token*
+
+# Backup Files  
+backup/
+*.bak
+*.backup
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+*.out
+
+# Temporary files
+tmp/
+*.tmp
+*.swp
+*.swo
+*#
+.#*
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+.directory
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Local configuration overrides
+local_config.json
+.env.local
+
+# Testing
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+
+# Documentation builds
+docs/_build/
+*.pdf
+
+# Encrypted data that should be backed up separately
+*.encrypted
+*.gpg
