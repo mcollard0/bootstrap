@@ -30,8 +30,11 @@ chmod +x bootstrap_standalone.sh
 ls -la bootstrap_standalone.sh
 file bootstrap_standalone.sh
 
-# Run the bootstrap script (requires sudo)
-sudo ./bootstrap_standalone.sh
+# Verify script syntax
+bash -n bootstrap_standalone.sh && echo "✅ Script syntax valid" || echo "❌ Script syntax error"
+
+# Run the bootstrap script with explicit bash (requires sudo)
+sudo bash bootstrap_standalone.sh
 ```
 
 ### 3. Master Password
@@ -124,6 +127,22 @@ head -20 bootstrap_standalone.sh
 
 # Check if it's a valid bash script
 bash -n bootstrap_standalone.sh && echo "✅ Script syntax valid" || echo "❌ Script syntax error"
+```
+
+### Shell Compatibility Issues
+```bash
+# If you get "Illegal option -o pipefail" error:
+# Make sure you're using bash, not sh
+echo $0  # Should show bash, not sh
+
+# Check bash version
+bash --version
+
+# If bash is not available, install it
+sudo apt update && sudo apt install bash
+
+# Always run with explicit bash command
+sudo bash bootstrap_standalone.sh  # Instead of sudo ./bootstrap_standalone.sh
 ```
 
 ---
