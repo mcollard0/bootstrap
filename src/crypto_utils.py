@@ -18,10 +18,13 @@ import secrets;
 import getpass;
 from typing import Tuple, Dict, Any;
 
+# Debug flag for password troubleshooting
+DEBUG_CRYPTO = os.environ.get( 'CRYPTO_DEBUG', '0' ) == '1';
+
 try:
     from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305;
     from argon2 import PasswordHasher;
-    from argon2.low_level import hash_secret, Type;
+    from argon2.low_level import hash_secret_raw, Type;
 except ImportError as e:
     print( f"Missing required cryptography libraries: {e}" );
     print( "Install with: pip3 install cryptography argon2-cffi" );
@@ -63,7 +66,8 @@ class SecureBootstrapCrypto:
             salt = secrets.token_bytes( self.ARGON2_SALT_LEN );
         
         # Use Argon2id for maximum security against all attack vectors
-        derived_key = hash_secret(
+        # Using hash_secret_raw to get raw 32-byte output (not encoded format)
+        derived_key = hash_secret_raw(
             password.encode( 'utf-8' ),
             salt,
             time_cost=self.ARGON2_TIME_COST,
@@ -73,14 +77,17 @@ class SecureBootstrapCrypto:
             type=Type.ID  # Argon2id variant
         );
         
-        # Extract the actual key bytes (Argon2 returns the hash directly)
-        if isinstance( derived_key, bytes ) and len( derived_key ) == self.ARGON2_HASH_LEN:
-            key = derived_key;
-        else:
-            # Fallback: take first 32 bytes if format is different
-            key = derived_key[:self.ARGON2_HASH_LEN];
+        if DEBUG_CRYPTO:
+            print( f"🔍 Debug: Password: '{password}'" );
+            print( f"🔍 Debug: Salt length: {len(salt)} bytes" );
+            print( f"🔍 Debug: Derived key length: {len(derived_key)} bytes" );
+            print( f"🔍 Debug: Key (hex): {derived_key.hex() if isinstance(derived_key, bytes) else 'NOT_BYTES'}" );
         
-        return key, salt;
+        # Ensure we have exactly 32 bytes for ChaCha20
+        if len( derived_key ) != self.ARGON2_HASH_LEN:
+            raise ValueError( f"Argon2 produced {len(derived_key)} bytes, expected {self.ARGON2_HASH_LEN}" );
+        
+        return derived_key, salt;
     
     def encrypt( self, plaintext: str, password: str ) -> Dict[str, str]:
         """
@@ -156,6 +163,11 @@ class SecureBootstrapCrypto:
             return plaintext_bytes.decode( 'utf-8' );
             
         except Exception as e:
+            if DEBUG_CRYPTO:
+                print( f"🔍 Debug: Decryption error: {e}" );
+                print( f"🔍 Debug: Password used: '{password}'" );
+                print( f"🔍 Debug: Salt: {salt.hex()}" );
+                print( f"🔍 Debug: Key length: {len(key) if 'key' in locals() else 'NOT_SET'}" );
             raise ValueError( f"Decryption failed - invalid password or corrupted data: {e}" );
     
     def encrypt_dict( self, sensitive_data: Dict[str, Any], password: str ) -> Dict[str, Any]:
