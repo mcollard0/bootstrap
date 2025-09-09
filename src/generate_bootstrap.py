@@ -571,6 +571,60 @@ PYTHON_SCRIPT
         
         return script;
     
+    def generate_custom_services_installation( self, custom_services: List[Dict[str, Any]] ) -> str:
+        """Generate custom services installation."""
+        if not custom_services:
+            return "    # No custom services to install\\n\\n";
+        
+        script = "    # Install custom services\\n";
+        script += "    log_info \"🔧 Installing custom services...\";\\n\\n";
+        
+        for service in custom_services:
+            if service['name'] == 'gridshift':
+                script += "    # Install GridShift - Automated Media Download Manager\\n";
+                script += "    log_info \"Installing GridShift from GitHub...\";\\n";
+                script += "    \\n";
+                script += "    # Create installation directory\\n";
+                script += "    GRIDSHIFT_DIR=\"/opt/gridshift\";\\n";
+                script += "    sudo mkdir -p \"$GRIDSHIFT_DIR\";\\n";
+                script += "    sudo chown \"$TARGET_USER:$TARGET_USER\" \"$GRIDSHIFT_DIR\";\\n";
+                script += "    \\n";
+                script += "    # Clone GridShift repository\\n";
+                script += "    sudo -u \"$TARGET_USER\" git clone https://github.com/mcollard0/gridshift.git \"$GRIDSHIFT_DIR\";\\n";
+                script += "    cd \"$GRIDSHIFT_DIR\";\\n";
+                script += "    \\n";
+                script += "    # Set up Python virtual environment\\n";
+                script += "    log_info \"Setting up Python virtual environment for GridShift...\";\\n";
+                script += "    sudo -u \"$TARGET_USER\" python3 -m venv \"$GRIDSHIFT_DIR/venv\";\\n";
+                script += "    \\n";
+                script += "    # Install Python dependencies\\n";
+                script += "    sudo -u \"$TARGET_USER\" \"$GRIDSHIFT_DIR/venv/bin/pip\" install --upgrade pip;\\n";
+                script += "    sudo -u \"$TARGET_USER\" \"$GRIDSHIFT_DIR/venv/bin/pip\" install -r \"$GRIDSHIFT_DIR/requirements.txt\";\\n";
+                script += "    \\n";
+                script += "    # Install pyload-ng for download management\\n";
+                script += "    sudo -u \"$TARGET_USER\" \"$GRIDSHIFT_DIR/venv/bin/pip\" install pyload-ng;\\n";
+                script += "    \\n";
+                script += "    # Test the installation\\n";
+                script += "    if sudo -u \"$TARGET_USER\" \"$GRIDSHIFT_DIR/venv/bin/python\" \"$GRIDSHIFT_DIR/test_setup.py\"; then\\n";
+                script += "        log_success \"GridShift installed successfully\";\\n";
+                script += "    else\\n";
+                script += "        log_warning \"GridShift installation test failed - check logs\";\\n";
+                script += "    fi;\\n";
+                script += "    \\n";
+                script += "    # Create convenient aliases in .bashrc\\n";
+                script += "    echo 'alias gridshift=\"cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu\"' >> \"$USER_HOME/.bashrc\";\\n";
+                script += "    echo 'alias gridshift-daemon=\"cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu daemon\"' >> \"$USER_HOME/.bashrc\";\\n";
+                script += "    echo 'alias gridshift-monitor=\"cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu monitor\"' >> \"$USER_HOME/.bashrc\";\\n";
+                script += "    \\n";
+                script += "    log_info \"GridShift aliases added to .bashrc\";\\n";
+                script += "    log_info \"Use 'gridshift' command to access the interactive menu\";\\n";
+                script += "    log_info \"Use 'gridshift-daemon' to start automation\";\\n";
+                script += "    log_info \"Use 'gridshift-monitor' for real-time monitoring\";\\n";
+                script += "    \\n";
+        
+        script += "    log_success \"Custom services installation completed\";\\n\\n";
+        return script;
+    
     def generate_script_footer( self ) -> str:
         """Generate script footer with completion message."""
         return '''    # Final steps and completion
@@ -629,6 +683,10 @@ main "$@";
             system_config.get( 'bashrc_additions', [] ), encrypted_secrets 
         ) );
         
+        # Custom services installation
+        custom_services = inventory.get( 'custom_services', [] );
+        script_parts.append( self.generate_custom_services_installation( custom_services ) );
+        
         # User files and settings
         files = inventory.get( 'files', {} );
         script_parts.append( self.generate_ssh_restoration( files.get( 'ssh_keys', [] ) ) );
@@ -678,6 +736,7 @@ def main():
         print( f"   APT packages: {len(packages.get('apt', []))}" );
         print( f"   Snap packages: {len(packages.get('snap', []))}" );
         print( f"   Python packages: {len(packages.get('python', []))}" );
+        print( f"   Custom services: {len(inventory.get('custom_services', []))}" );
         
         system_config = inventory.get( 'system_config', {} );
         files = inventory.get( 'files', {} );

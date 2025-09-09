@@ -4,10 +4,15 @@
     "ubuntu_version": "25.04",
     "codename": "plucky",
     "hostname": "michael-asus-02-System-Product-Name",
-    "timestamp": "2025-09-07T20:35:09.233473"
+    "timestamp": "2025-09-08T10:55:42.260913"
   },
   "packages": {
     "apt": [
+      {
+        "name": "7zip",
+        "version": "24.09+dfsg-7",
+        "status": "installed"
+      },
       {
         "name": "accountsservice",
         "version": "23.13.9-7ubuntu1",
@@ -385,7 +390,7 @@
       },
       {
         "name": "code-insiders",
-        "version": "1.104.0-1757067413",
+        "version": "1.104.0-1757310161",
         "status": "installed"
       },
       {
@@ -11489,6 +11494,11 @@
         "status": "installed"
       },
       {
+        "name": "p7zip-full",
+        "version": "16.02+transitional.1",
+        "status": "installed"
+      },
+      {
         "name": "packagekit",
         "version": "1.3.0-3build1",
         "status": "installed"
@@ -11621,6 +11631,11 @@
       {
         "name": "pkgconf-bin",
         "version": "1.8.1-4",
+        "status": "installed"
+      },
+      {
+        "name": "plexmediaserver",
+        "version": "1.40.4.8679-424562606",
         "status": "installed"
       },
       {
@@ -13219,6 +13234,11 @@
         "status": "installed"
       },
       {
+        "name": "unrar",
+        "version": "1:7.1.5-3",
+        "status": "installed"
+      },
+      {
         "name": "unzip",
         "version": "6.0-28ubuntu6",
         "status": "installed"
@@ -13817,8 +13837,8 @@
       },
       {
         "name": "core24",
-        "version": "20250618",
-        "channel": "1055"
+        "version": "20250729",
+        "channel": "1151"
       },
       {
         "name": "desktop-security-center",
@@ -14323,6 +14343,18 @@
       }
     ]
   },
+  "custom_services": [
+    {
+      "name": "gridshift",
+      "type": "custom_service",
+      "path": "/media/michael/FASTESTARCHIVE/Archive/Programming/Python/gridshift",
+      "git_remote": "origin\tgit@github.com:mcollard0/gridshift.git (fetch)\norigin\tgit@github.com:mcollard0/gridshift.git (push)",
+      "has_requirements": true,
+      "has_venv": true,
+      "is_running": true,
+      "installation_method": "git_clone_venv"
+    }
+  ],
   "system_config": {
     "sysctl": {
       "vm.swappiness": "60",
