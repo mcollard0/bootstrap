@@ -189,6 +189,70 @@ class UbuntuSystemScanner:
         print( f"    ✅ Found {len(packages)} Python packages" );
         return packages;
     
+    def scan_custom_services( self ) -> List[Dict[str, Any]]:
+        """Scan for custom services and installations like gridshift."""
+        print( "  🔍 Scanning custom services..." );
+        services = [];
+        
+        # Check for gridshift installation
+        gridshift_paths = [
+            '/media/michael/FASTESTARCHIVE/Archive/Programming/Python/gridshift',
+            os.path.expanduser( '~/gridshift' ),
+            '/opt/gridshift',
+            '/usr/local/gridshift'
+        ];
+        
+        for path in gridshift_paths:
+            if os.path.exists( path ) and os.path.isdir( path ):
+                # Check if it's a git repository
+                git_dir = os.path.join( path, '.git' );
+                if os.path.exists( git_dir ):
+                    try:
+                        # Get git remote info
+                        result = subprocess.run(
+                            ['git', '-C', path, 'remote', '-v'],
+                            capture_output=True, text=True, check=True
+                        );
+                        remote_info = result.stdout.strip();
+                        
+                        # Check if requirements.txt exists
+                        requirements_file = os.path.join( path, 'requirements.txt' );
+                        has_requirements = os.path.exists( requirements_file );
+                        
+                        # Check if venv exists
+                        venv_path = os.path.join( path, 'venv' );
+                        has_venv = os.path.exists( venv_path );
+                        
+                        # Check if it's currently running
+                        is_running = False;
+                        try:
+                            ps_result = subprocess.run(
+                                ['ps', 'aux'],
+                                capture_output=True, text=True, check=True
+                            );
+                            is_running = 'gridshift' in ps_result.stdout.lower();
+                        except:
+                            pass;
+                        
+                        services.append({
+                            'name': 'gridshift',
+                            'type': 'custom_service',
+                            'path': path,
+                            'git_remote': remote_info,
+                            'has_requirements': has_requirements,
+                            'has_venv': has_venv,
+                            'is_running': is_running,
+                            'installation_method': 'git_clone_venv'
+                        });
+                        
+                        break;  # Found one, don't check other paths
+                    except subprocess.CalledProcessError:
+                        # Not a git repository or other error
+                        continue;
+        
+        print( f"    ✅ Found {len(services)} custom services" );
+        return services;
+    
     def scan_bashrc_customizations( self ) -> Tuple[List[str], Dict[str, Any]]:
         """
         Scan .bashrc for custom additions, separating sensitive data.
@@ -366,6 +430,7 @@ class UbuntuSystemScanner:
         snap_packages = self.scan_snap_packages();
         flatpak_packages = self.scan_flatpak_packages();
         python_packages = self.scan_python_packages();
+        custom_services = self.scan_custom_services();
         
         bashrc_safe, bashrc_sensitive = self.scan_bashrc_customizations();
         sysctl_settings = self.scan_sysctl_settings();
@@ -392,6 +457,7 @@ class UbuntuSystemScanner:
                 'flatpak': flatpak_packages,
                 'python': python_packages
             },
+            'custom_services': custom_services,
             'system_config': {
                 'sysctl': sysctl_settings,
                 'bashrc_additions': bashrc_safe,
@@ -443,6 +509,7 @@ def main():
     print( f"   APT packages: {len(inventory['packages']['apt'])}" );
     print( f"   Snap packages: {len(inventory['packages']['snap'])}" );
     print( f"   Python packages: {len(inventory['packages']['python'])}" );
+    print( f"   Custom services: {len(inventory['custom_services'])}" );
     print( f"   SSH keys: {len(inventory['files']['ssh_keys'])}" );
     print( f"   Cron jobs: {len(inventory['system_config']['cron_jobs'])}" );
     print( f"   Encrypted secrets: {len(inventory['encrypted_refs'])}" );
