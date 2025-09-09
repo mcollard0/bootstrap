@@ -1,14 +1,19 @@
 # Ubuntu Bootstrap System - Git Ignore Rules
 
-# Sensitive Data (never commit plaintext secrets)
-data/encrypted_secrets.key
-data/master_password.txt
+# Sensitive Data (never commit real secrets - use examples only)
+data/encrypted_secrets.json
+data/master_password.txt  
 *.key
 *.pem
 *.cert
 *_password*
 *_secret*
 *_token*
+scripts/bootstrap_standalone.sh
+
+# Example/template files are OK (these contain dummy data only)
+!data/encrypted_secrets.example.json
+!scripts/bootstrap_standalone.example.sh
 
 # Backup Files  
 backup/

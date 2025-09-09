@@ -2,7 +2,12 @@
 
 **Complete system configuration backup and restoration for Ubuntu systems with military-grade encryption.**
 
-THis is what I wanted NIX to be... 
+> ⚠️ **Public Repository Notice**: This is a template/example repository. Before using:
+> 1. Fork or clone this repository to your own account
+> 2. Set up your own encrypted secrets (see `SECRETS_SETUP.md`)
+> 3. Never commit real API keys or passwords to version control
+
+This is what I wanted NIX to be...
 
 ## 🚀 Overview
 
@@ -134,10 +139,11 @@ VBoxManage createvm --name "Ubuntu-Bootstrap-Test" --ostype "Ubuntu_64" --regist
 - ✅ **Tampering**: Poly1305 MAC prevents modification attacks
 
 ### What's Protected
-- API keys (OpenAI, Anthropic, XAI, Google Places)
-- Database connection strings (MongoDB URIs)
-- Email passwords and SMTP credentials
+- API keys (OpenAI, Anthropic, XAI, Google Places, etc.)
+- Database connection strings (MongoDB URIs, PostgreSQL, etc.)
+- Email passwords and SMTP credentials  
 - Custom environment variables containing secrets
+- Any sensitive configuration you choose to encrypt
 
 ## 📋 System Requirements
 
@@ -170,9 +176,24 @@ python3 src/make_backup.py
 
 ### Git Repository Setup
 ```bash
-# Create private repository on GitHub
-git remote add origin git@github.com:USERNAME/bootstrap.git
-git push -u origin master
+# Fork this repository or create your own
+git clone https://github.com/mcollard0/bootstrap.git
+cd bootstrap
+
+# Set up your own remote (recommended: private repository)
+git remote set-url origin git@github.com:YOUR_USERNAME/your-bootstrap.git
+git push -u origin main
+```
+
+### Setting Up Your Secrets
+```bash
+# Copy example secrets and encrypt your own data
+cp data/encrypted_secrets.example.json data/encrypted_secrets.json
+
+# Use the interactive encryption tool
+python3 src/crypto_utils.py
+
+# Or see SECRETS_SETUP.md for detailed instructions
 ```
 
 ### Custom Configuration

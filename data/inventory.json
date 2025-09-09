@@ -14363,8 +14363,8 @@
       "kernel.shmmax": "18446744073692774399"
     },
     "bashrc_additions": [
-      "export gmail_sender_email=mcollard@gmail.com",
-      "export gmail_recipient_email=mcollard@gmail.com",
+      "export gmail_sender_email=your-email@gmail.com",
+      "export gmail_recipient_email=your-email@gmail.com",
       "if ! command -v code &> /dev/null; then",
       "if command -v code-insiders &> /dev/null; then",
       "alias code='code-insiders'",

@@ -17,7 +17,10 @@ import shutil;
 from pathlib import Path;
 from typing import Dict, List, Any, Optional, Tuple;
 
-from crypto_utils import SecureBootstrapCrypto, prompt_for_password;
+try:
+    from .crypto_utils import SecureBootstrapCrypto, prompt_for_password;
+except ImportError:
+    from crypto_utils import SecureBootstrapCrypto, prompt_for_password;
 
 
 class UbuntuSystemScanner:
