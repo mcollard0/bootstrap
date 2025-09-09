@@ -2,9 +2,11 @@
 
 **Complete system configuration backup and restoration for Ubuntu systems with military-grade encryption.**
 
+THis is what I wanted NIX to be... 
+
 ## 🚀 Overview
 
-The Ubuntu Bootstrap System is a comprehensive solution for capturing, encrypting, and restoring complete Ubuntu system configurations. It creates an encrypted inventory of your entire system setup and generates restoration scripts that can recreate your exact environment on a fresh Ubuntu installation.
+The Ubuntu Bootstrap System is a comprehensive solution for capturing, encrypting, and restoring complete Ubuntu system configurations. It creates an encrypted inventory of your entire system setup and generates restoration scripts that can recreate your exact environment on a fresh Ubuntu installation. 
 
 ### 🔐 Key Security Features
 
