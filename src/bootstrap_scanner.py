@@ -422,6 +422,79 @@ class UbuntuSystemScanner:
         print( f"    ✅ Found {len(cron_jobs)} cron jobs" );
         return cron_jobs;
     
+    def scan_keyboard_shortcuts( self ) -> List[Dict[str, str]]:
+        """Scan GNOME keyboard shortcuts configuration."""
+        print( "  ⌨️  Scanning keyboard shortcuts..." );
+        shortcuts = [];
+        
+        try:
+            # First, get the list of custom keybinding paths
+            result = subprocess.run(
+                ['gsettings', 'get', 'org.gnome.settings-daemon.plugins.media-keys', 'custom-keybindings'],
+                capture_output=True, text=True, check=True
+            );
+            
+            if result.stdout.strip() != "@as []":
+                # Parse the custom keybinding paths
+                import ast;
+                try:
+                    paths_str = result.stdout.strip();
+                    # Convert gsettings array format to Python list
+                    if paths_str.startswith( '[' ) and paths_str.endswith( ']' ):
+                        # Remove the brackets and split by comma
+                        paths_content = paths_str[1:-1];
+                        if paths_content.strip():
+                            paths = [path.strip().strip( "'\"" ) for path in paths_content.split( ',' )];
+                        else:
+                            paths = [];
+                    else:
+                        paths = [];
+                    
+                    # For each custom keybinding path, get the details
+                    for path in paths:
+                        if path:
+                            try:
+                                # Get name, command, and binding for this shortcut
+                                name_result = subprocess.run(
+                                    ['gsettings', 'get', f'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}', 'name'],
+                                    capture_output=True, text=True, check=True
+                                );
+                                
+                                command_result = subprocess.run(
+                                    ['gsettings', 'get', f'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}', 'command'],
+                                    capture_output=True, text=True, check=True
+                                );
+                                
+                                binding_result = subprocess.run(
+                                    ['gsettings', 'get', f'org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}', 'binding'],
+                                    capture_output=True, text=True, check=True
+                                );
+                                
+                                # Clean up the gsettings output (remove quotes)
+                                name = name_result.stdout.strip().strip( "'\"" );
+                                command = command_result.stdout.strip().strip( "'\"" );
+                                binding = binding_result.stdout.strip().strip( "'\"" );
+                                
+                                shortcuts.append({
+                                    'name': name,
+                                    'command': command,
+                                    'binding': binding,
+                                    'path': path
+                                });
+                                
+                            except subprocess.CalledProcessError as e:
+                                print( f"    ⚠️  Failed to get details for shortcut {path}: {e}" );
+                                continue;
+                    
+                except Exception as e:
+                    print( f"    ⚠️  Failed to parse custom keybinding paths: {e}" );
+            
+        except ( subprocess.CalledProcessError, FileNotFoundError ):
+            print( "    ⚠️  gsettings not available or GNOME not running" );
+        
+        print( f"    ✅ Found {len(shortcuts)} keyboard shortcuts" );
+        return shortcuts;
+    
     def create_inventory( self, encrypt_sensitive: bool = True ) -> Dict[str, Any]:
         """Create complete system inventory."""
         print( "🔍 Creating comprehensive system inventory..." );
@@ -439,6 +512,7 @@ class UbuntuSystemScanner:
         sysctl_settings = self.scan_sysctl_settings();
         ssh_keys = self.scan_ssh_keys();
         cron_jobs = self.scan_cron_jobs();
+        keyboard_shortcuts = self.scan_keyboard_shortcuts();
         
         # Handle sensitive data encryption
         encrypted_refs = [];
@@ -464,7 +538,8 @@ class UbuntuSystemScanner:
             'system_config': {
                 'sysctl': sysctl_settings,
                 'bashrc_additions': bashrc_safe,
-                'cron_jobs': cron_jobs
+                'cron_jobs': cron_jobs,
+                'keyboard_shortcuts': keyboard_shortcuts
             },
             'files': {
                 'ssh_keys': ssh_keys
@@ -515,6 +590,7 @@ def main():
     print( f"   Custom services: {len(inventory['custom_services'])}" );
     print( f"   SSH keys: {len(inventory['files']['ssh_keys'])}" );
     print( f"   Cron jobs: {len(inventory['system_config']['cron_jobs'])}" );
+    print( f"   Keyboard shortcuts: {len(inventory['system_config']['keyboard_shortcuts'])}" );
     print( f"   Encrypted secrets: {len(inventory['encrypted_refs'])}" );
     
     print( f"\n💡 Next steps:" );
