@@ -15,6 +15,7 @@ bootstrap/
 │   └── make_backup.py      # Backup management
 ├── scripts/                # Generated scripts
 │   ├── bootstrap.sh        # Main system restoration script
+│   ├── configure_keyboard_shortcuts.sh # Keyboard shortcuts configuration
 │   ├── generate_cron.sh    # Cron job setup
 │   └── git_auto_push.sh    # Automated git operations
 ├── docs/                   # Documentation
@@ -45,7 +46,8 @@ bootstrap/
   "system_config": {
     "sysctl": {"key": "value"},
     "bashrc_additions": ["export VAR=value"],
-    "cron_jobs": ["0 3 * * * command"]
+    "cron_jobs": ["0 3 * * * command"],
+    "keyboard_shortcuts": [{"name": "Run Dialog", "binding": "<Super>r", "command": "gnome-terminal ..."}]
   },
   "files": {
     "ssh_keys": [{"path": "~/.ssh/id_ed25519.pub", "content": "key-data"}]
@@ -85,6 +87,8 @@ N/A - This is a local system tool without network APIs.
 ### ✅ Implemented
 - Project structure
 - Architecture documentation
+- Keyboard shortcuts configuration (Super+R for run dialog, Super+E for Nautilus)
+- Keyboard shortcuts scanning and inventory capture
 
 ### 🚧 In Progress
 - Crypto utilities implementation
@@ -108,6 +112,7 @@ N/A - This is a local system tool without network APIs.
 1. **Incremental updates**: Only apply changes that differ from defaults
 2. **Permission preservation**: SSH keys, config files maintain original permissions
 3. **Service management**: Restart services when configurations change
+4. **Desktop environment**: GNOME keyboard shortcuts configured via gsettings
 
 ### Security Handling
 1. **Encryption at rest**: All sensitive data encrypted in git repository
@@ -126,6 +131,7 @@ N/A - This is a local system tool without network APIs.
 
 ### Current Limitations
 - Ubuntu-specific (apt, snap ecosystem)
+- GNOME-specific keyboard shortcuts (other DEs not supported)
 - Requires manual password entry during restoration
 - SSH keys assumed to use Ed25519 format
 - Limited to local system analysis
