@@ -184,6 +184,39 @@ EOF
     else
         log_info "VirtualBox already installed";
     fi;
+    
+    # Configure display server for optimal compatibility
+    log_info "🖥️  Configuring display server for optimal compatibility...";
+    
+    # Source display server configuration functions
+    if [[ -f "./configure_display_server.sh" ]]; then
+        source "./configure_display_server.sh";
+        
+        # Detect current display server
+        CURRENT_DISPLAY_SERVER=$(detect_display_server);
+        
+        case "$CURRENT_DISPLAY_SERVER" in
+            "wayland")
+                log_info "Wayland detected. For optimal compatibility with applications like Zoom screen sharing,";
+                log_info "the system can be configured to use X11 instead.";
+                log_warning "⚠️  Display server changes require reboot and will NOT restart GUI immediately";
+                log_info "This ensures running applications (installs, updates, etc.) are not interrupted.";
+                
+                # Configure X11 for better compatibility
+                log_info "Configuring X11 for improved application compatibility...";
+                configure_x11;
+                log_success "Display server configured for X11 (effective after reboot)";
+                ;;
+            "x11")
+                log_success "X11 already configured - optimal for application compatibility";
+                ;;
+            *)
+                log_warning "Unknown display server state, skipping configuration";
+                ;;
+        esac;
+    else
+        log_warning "Display server configuration script not found - skipping";
+    fi;
 
 # Ensure pip3 is available before installing Python packages
 log_info "🔧 Checking Python pip3 availability...";
