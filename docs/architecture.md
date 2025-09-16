@@ -16,6 +16,7 @@ bootstrap/
 ├── scripts/                # Generated scripts
 │   ├── bootstrap.sh        # Main system restoration script
 │   ├── configure_keyboard_shortcuts.sh # Keyboard shortcuts configuration
+│   ├── configure_display_server.sh # Display server detection & configuration
 │   ├── generate_cron.sh    # Cron job setup
 │   └── git_auto_push.sh    # Automated git operations
 ├── docs/                   # Documentation
@@ -89,6 +90,8 @@ N/A - This is a local system tool without network APIs.
 - Architecture documentation
 - Keyboard shortcuts configuration (Super+R for run dialog, Super+E for Nautilus)
 - Keyboard shortcuts scanning and inventory capture
+- Display server detection and configuration system (Wayland/X11)
+- Safe X11 configuration without immediate GUI restart
 
 ### 🚧 In Progress
 - Crypto utilities implementation
@@ -113,6 +116,7 @@ N/A - This is a local system tool without network APIs.
 2. **Permission preservation**: SSH keys, config files maintain original permissions
 3. **Service management**: Restart services when configurations change
 4. **Desktop environment**: GNOME keyboard shortcuts configured via gsettings
+5. **Display server management**: Automatically detect and configure optimal display server (X11/Wayland) for compatibility
 
 ### Security Handling
 1. **Encryption at rest**: All sensitive data encrypted in git repository
@@ -140,6 +144,7 @@ N/A - This is a local system tool without network APIs.
 - Master password must be remembered (no recovery mechanism)
 - Backup rotation may leave sensitive data in filesystem slack space
 - Cron jobs run with user privileges (not root)
+- Display server changes require reboot (prevents application interruption during deployment)
 
 ## Development Guidelines
 
