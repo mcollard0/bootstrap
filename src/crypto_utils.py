@@ -79,8 +79,8 @@ class SecureBootstrapCrypto:
         key = b'\x00' * len( key );
         return plaintext;
     
-    def encrypt_file( self, path: str, password: str ) -> Dict[str, Any]:
-        """Encrypt a file's bytes and return an object including path and mode."""
+    def encrypt_file( self, path: str, password: str, **kwargs ) -> Dict[str, Any]:
+        """Encrypt a file's bytes and return an object including path, mode, and optional flags."""
         st = os.stat( path );
         mode = oct( st.st_mode )[-3:];
         with open( path, 'rb' ) as f:
@@ -88,6 +88,17 @@ class SecureBootstrapCrypto:
         enc = self.encrypt_bytes( data, password );
         enc['path'] = path;
         enc['mode'] = mode;
+        
+        # Add optional flags
+        if 'not_to_restore' in kwargs:
+            enc['not_to_restore'] = kwargs['not_to_restore'];
+        if 'ask' in kwargs:
+            enc['ask'] = kwargs['ask'];
+        if 'default' in kwargs:
+            enc['default'] = kwargs['default'];
+        if 'description' in kwargs:
+            enc['description'] = kwargs['description'];
+            
         return enc;
     
     def decrypt_file_to_path( self, enc: Dict[str, Any], password: str, dest_path: str = None ) -> str:
@@ -296,6 +307,22 @@ class SecureBootstrapCrypto:
             encrypted_files = encrypted_dict.get( 'encrypted_files', {} );
             for file_key, encrypted_file in encrypted_files.items():
                 try:
+                    # Check if file should not be restored
+                    if encrypted_file.get( 'not_to_restore', False ):
+                        print( f"  📁 Archive-only file skipped: {file_key} ({encrypted_file.get('path', 'unknown path')})" );
+                        continue;
+                    
+                    # Check if we should ask user
+                    if encrypted_file.get( 'ask', False ):
+                        default = encrypted_file.get( 'default', 'no' ).lower();
+                        desc = encrypted_file.get( 'description', file_key );
+                        response = input( f"Restore {desc} ({encrypted_file.get('path', 'unknown')})? [y/N]: " ).strip().lower();
+                        if not response:
+                            response = default;
+                        if response not in ['y', 'yes']:
+                            print( f"  ⏭ Skipped by user: {file_key}" );
+                            continue;
+                    
                     restored_path = self.decrypt_file_to_path( encrypted_file, password );
                     print( f"  ✓ Restored file: {restored_path}" );
                 except Exception as e:
