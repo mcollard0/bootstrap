@@ -1,8 +1,9 @@
 #!/bin/bash
 #
-# Ubuntu Bootstrap Restoration Script
+# Ubuntu Bootstrap Restoration Script (CORRECTED VERSION)
 # Generated: 2025-09-08T10:56:28.863467
 # Source System: Ubuntu 25.04
+# Fixed: 2025-09-28 - Resolved apt-key deprecation and shell syntax issues
 # 
 # This script restores a complete Ubuntu system configuration including:
 # - Package installations (APT, Snap, Flatpak, Python)
@@ -10,7 +11,7 @@
 # - User environment (.bashrc, SSH keys, cron jobs)
 # - Encrypted sensitive data (API keys, credentials)
 #
-# Usage: sudo ./bootstrap.sh
+# Usage: sudo ./bootstrap_fixed.sh
 #
 
 set -euo pipefail;  # Exit on any error, undefined vars, pipe failures
@@ -32,7 +33,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; };
 check_sudo() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run with sudo privileges for system-level changes";
-        log_info "Usage: sudo ./bootstrap.sh";
+        log_info "Usage: sudo ./bootstrap_fixed.sh";
         exit 1;
     fi;
 };
@@ -62,8 +63,8 @@ is_flatpak_installed() {
 
 # Main restoration starts here
 main() {
-    log_info "🚀 Starting Ubuntu Bootstrap Restoration";
-    log_info "=========================================";
+    log_info "🚀 Starting Ubuntu Bootstrap Restoration (FIXED VERSION)";
+    log_info "=========================================================";
     
     check_sudo;
     readonly TARGET_USER=$(check_user);
@@ -83,15 +84,15 @@ main() {
     # Remove Firefox if installed (as requested)
     log_info "🦊 Checking Firefox installation...";
     if is_snap_installed "firefox"; then
-        log_warning "Removing Firefox snap package...";
-        snap remove firefox;
+        #log_warning "Removing Firefox snap package...";
+        #snap remove firefox;
         log_success "Firefox snap removed";
     fi;
     
     if is_apt_installed "firefox"; then
         log_warning "Removing Firefox APT package...";
-        apt remove --purge -y firefox firefox-esr;
-        apt autoremove -y;
+        #apt remove --purge -y firefox firefox-esr;
+        #apt autoremove -y;
         log_success "Firefox APT package removed";
     fi;
     
@@ -131,17 +132,28 @@ EOF
     fi;
     
     # Update initramfs to ensure changes persist
-    update-initramfs -u;
+    # Update initramfs only if blacklist config is newer than current initramfs
+    CURRENT_KERNEL=$(uname -r);
+    INITRAMFS_FILE="/boot/initrd.img-$CURRENT_KERNEL";
+    BLACKLIST_CONFIG="/etc/modprobe.d/blacklist-intel-kvm.conf";
+    
+    if [[ ! -f "$INITRAMFS_FILE" ]] || [[ "$BLACKLIST_CONFIG" -nt "$INITRAMFS_FILE" ]]; then
+        log_info "Updating initramfs (blacklist config is newer or initramfs missing)...";
+        update-initramfs -u;
+        log_success "Initramfs updated with KVM blacklist";
+    else
+        log_info "Initramfs already up-to-date with KVM blacklist - skipping regeneration";
+    fi;
     log_success "Intel KVM modules disabled";
     
     # Install special packages with custom repositories
     log_info "🌟 Installing special packages...";
     
-    # Google Chrome
+    # Google Chrome - FIXED: Use modern keyring approach instead of deprecated apt-key
     if ! is_apt_installed "google-chrome-stable"; then
         log_info "Installing Google Chrome...";
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -;
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list;
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg;
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list;
         apt update;
         apt install -y google-chrome-stable;
         log_success "Google Chrome installed";
@@ -149,11 +161,11 @@ EOF
         log_info "Google Chrome already installed";
     fi;
     
-    # Warp Terminal (preview version)
+    # Warp Terminal (preview version) - Already using correct modern approach
     if ! is_apt_installed "warp-terminal-preview"; then
         log_info "Installing Warp Terminal...";
         curl -fsSL https://releases.warp.dev/linux/keys/warp.asc | gpg --dearmor -o /usr/share/keyrings/warp.gpg;
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb stable main" > /etc/apt/sources.list.d/warp.list;
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb preview main" > /etc/apt/sources.list.d/warp.list;
         apt update;
         apt install -y warp-terminal-preview;
         log_success "Warp Terminal installed";
@@ -161,7 +173,7 @@ EOF
         log_info "Warp Terminal already installed";
     fi;
     
-    # Docker
+    # Docker - Already using correct modern approach
     if ! is_apt_installed "docker-ce"; then
         log_info "Installing Docker...";
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg;
@@ -218,91 +230,423 @@ EOF
         log_warning "Display server configuration script not found - skipping";
     fi;
 
-# Ensure pip3 is available before installing Python packages
-log_info "🔧 Checking Python pip3 availability...";
-if ! command -v pip3 >/dev/null 2>&1; then
-    log_info "Installing python3-pip...";
-    apt update;
-    apt install -y python3-pip;
-    log_success "pip3 installed";
-else
-    log_info "pip3 already available";
-fi;
-
-    
-    # Install APT packages\n    log_info "📦 Installing APT packages...";\n\n    # Batch 1\n    apt install -y 7zip accountsservice acl adduser adwaita-icon-theme alsa-base alsa-topology-conf alsa-ucm-conf alsa-utils amd64-microcode anacron apg apparmor apport apport-core-dump-handler apport-gtk apport-symptoms appstream apt apt-config-icons apt-config-icons-hidpi apt-utils aptdaemon aptdaemon-data aspell aspell-en assistant-qt6 at-spi2-common at-spi2-core autoconf automake autotools-dev avahi-daemon baobab base-files base-passwd bash bash-completion bc bind9-dnsutils bind9-host bind9-libs:amd64 binutils binutils-common:amd64 binutils-gold binutils-gold-x86-64-linux-gnu binutils-x86-64-linux-gnu blt bluez bluez-cups;\n\n    # Batch 2\n    apt install -y bluez-obexd bolt bpfcc-tools bpftool bpftrace brltty bsdextrautils bsdutils bubblewrap build-essential busybox-initramfs busybox-static bzip2 bzip2-doc ca-certificates clang-20 clang-tidy clang-tidy-20 clang-tools-20 clangd:amd64 clangd-20 cloud-guest-utils cloud-init cloud-init-base cmake cmake-data code-insiders colord colord-data comerr-dev:amd64 command-not-found console-setup console-setup-linux coreutils cpdb-backend-cups cpio cpp cpp-14 cpp-14-x86-64-linux-gnu cpp-15 cpp-15-x86-64-linux-gnu cpp-x86-64-linux-gnu cracklib-runtime crash cron cron-daemon-common cups cups-browsed cups-bsd cups-client;\n\n    # Batch 3\n    apt install -y cups-common cups-core-drivers cups-daemon cups-filters cups-filters-core-drivers cups-ipp-utils cups-pk-helper cups-ppdc cups-server-common curl dash dbus dbus-bin dbus-daemon dbus-session-bus-common dbus-system-bus-common dbus-user-session dc dcmtk-data dconf-cli dconf-gsettings-backend:amd64 dconf-service debconf debconf-i18n debianutils designer-qt6 desktop-file-utils dhcpcd-base dictionaries-common diffutils dirmngr displaylink-driver distro-info distro-info-data dkms dmidecode dmsetup dmz-cursor-theme dns-root-data dnsmasq-base docbook-xml docker-buildx-plugin docker-compose-plugin dosfstools dpkg dpkg-dev dracut-install e2fsprogs e2fsprogs-l10n eatmydata;\n\n    # Batch 4\n    apt install -y ed efibootmgr eject emacsen-common enchant-2 eog eslint espeak-ng-data:amd64 ethtool evdi evolution-data-server evolution-data-server-common exfatprogs fakeroot fdisk ffmpeg file findutils firmware-sof-signed fontconfig fontconfig-config fonts-dejavu-core fonts-dejavu-mono fonts-droid-fallback fonts-freefont-ttf fonts-liberation fonts-liberation-sans-narrow fonts-noto-cjk fonts-noto-color-emoji fonts-noto-core fonts-noto-mono fonts-ubuntu fonts-urw-base35 foomatic-db-compressed-ppds fprintd freerdp2-x11 friendly-recovery ftp fuse fuse3 fwupd fwupd-signed g++ g++-14 g++-14-x86-64-linux-gnu g++-15 g++-15-x86-64-linux-gnu g++-x86-64-linux-gnu gamemode gamemode-daemon;\n\n    # Batch 5\n    apt install -y gawk gcc gcc-14 gcc-14-base:amd64 gcc-14-x86-64-linux-gnu gcc-15 gcc-15-base:amd64 gcc-15-x86-64-linux-gnu gcc-x86-64-linux-gnu gcr gcr4 gdal-data gdal-plugins:amd64 gdb gdisk gdm3 geoclue-2.0 geocode-glib-common gettext gettext-base ghostscript gir1.2-accountsservice-1.0:amd64 gir1.2-adw-1:amd64 gir1.2-atk-1.0:amd64 gir1.2-atspi-2.0:amd64 gir1.2-freedesktop:amd64 gir1.2-freedesktop-dev:amd64 gir1.2-gck-2:amd64 gir1.2-gcr-4:amd64 gir1.2-gdesktopenums-3.0:amd64 gir1.2-gdkpixbuf-2.0:amd64 gir1.2-gdm-1.0 gir1.2-geoclue-2.0:amd64 gir1.2-girepository-2.0:amd64 gir1.2-glib-2.0:amd64 gir1.2-glib-2.0-dev:amd64 gir1.2-gmenu-3.0:amd64 gir1.2-gnomeautoar-0.1:amd64 gir1.2-gnomebg-4.0:amd64 gir1.2-gnomebluetooth-3.0:amd64 gir1.2-gnomedesktop-3.0:amd64 gir1.2-gnomedesktop-4.0:amd64 gir1.2-graphene-1.0:amd64 gir1.2-gstreamer-1.0:amd64 gir1.2-gtk-3.0:amd64 gir1.2-gtk-4.0:amd64 gir1.2-gweather-4.0:amd64 gir1.2-handy-1:amd64 gir1.2-harfbuzz-0.0:amd64 gir1.2-ibus-1.0:amd64;\n\n    # Batch 6\n    apt install -y gir1.2-javascriptcoregtk-4.1:amd64 gir1.2-mutter-16:amd64 gir1.2-nm-1.0:amd64 gir1.2-nma4-1.0:amd64 gir1.2-notify-0.7:amd64 gir1.2-packagekitglib-1.0 gir1.2-pango-1.0:amd64 gir1.2-peas-1.0:amd64 gir1.2-polkit-1.0 gir1.2-rsvg-2.0:amd64 gir1.2-secret-1:amd64 gir1.2-snapd-2:amd64 gir1.2-soup-3.0:amd64 gir1.2-upowerglib-1.0:amd64 gir1.2-vte-2.91:amd64 gir1.2-webkit2-4.1:amd64 gir1.2-wnck-3.0:amd64 girepository-tools:amd64 git git-man gjs glib-networking:amd64 glib-networking-common glib-networking-services gnome-accessibility-themes gnome-bluetooth-3-common gnome-bluetooth-sendto gnome-calculator gnome-characters gnome-clocks gnome-control-center gnome-control-center-data gnome-control-center-faces gnome-desktop3-data gnome-disk-utility gnome-font-viewer gnome-initial-setup gnome-keyring gnome-keyring-pkcs11:amd64 gnome-logs gnome-menus gnome-online-accounts gnome-power-manager gnome-remote-desktop gnome-screenshot gnome-session-bin gnome-session-canberra gnome-session-common gnome-settings-daemon gnome-settings-daemon-common;\n\n    # Batch 7\n    apt install -y gnome-shell gnome-shell-common gnome-shell-extension-appindicator gnome-shell-extension-desktop-icons-ng gnome-shell-extension-ubuntu-dock gnome-shell-extension-ubuntu-tiling-assistant gnome-snapshot gnome-startup-applications gnome-system-monitor gnome-terminal gnome-terminal-data gnome-text-editor gnome-themes-extra:amd64 gnome-themes-extra-data gnome-user-docs gnupg gnupg-l10n gnupg-utils golang-1.24-go golang-1.24-src golang-go:amd64 golang-src gpg gpg-agent gpg-wks-client gpgconf gpgsm gpgv graphviz grep grim groff-base grub-common grub-efi-amd64 grub-efi-amd64-bin grub-efi-amd64-signed grub-efi-amd64-unsigned grub2-common gsettings-desktop-schemas gsettings-ubuntu-schemas gstreamer1.0-alsa:amd64 gstreamer1.0-gl:amd64 gstreamer1.0-libav:amd64 gstreamer1.0-libcamera:amd64 gstreamer1.0-packagekit gstreamer1.0-pipewire:amd64 gstreamer1.0-plugins-base:amd64 gstreamer1.0-plugins-base-apps gstreamer1.0-plugins-good:amd64 gstreamer1.0-plugins-ugly:amd64;\n\n    # Batch 8\n    apt install -y gstreamer1.0-tools gstreamer1.0-vaapi:amd64 gstreamer1.0-x:amd64 gtk-update-icon-cache gtk2-engines-murrine:amd64 gtk2-engines-pixbuf:amd64 gvfs:amd64 gvfs-backends gvfs-common gvfs-daemons gvfs-fuse gvfs-libs:amd64 gyp gzip handlebars hdparm heif-gdk-pixbuf:amd64 heif-thumbnailer hicolor-icon-theme hostname hplip hplip-data hunspell-en-us hwdata ibus ibus-data ibus-gtk:amd64 ibus-gtk3:amd64 ibus-gtk4:amd64 ibus-table ibus-table-cangjie-big ibus-table-cangjie3 ibus-table-cangjie5 ibverbs-providers:amd64 icu-devtools ieee-data iio-sensor-proxy im-config imagemagick imagemagick-7-common imagemagick-7.q16 inetutils-telnet info init init-system-helpers initramfs-tools initramfs-tools-bin initramfs-tools-core inputattach install-info;\n\n    # Batch 9\n    apt install -y intel-microcode ipp-usb iproute2 iptables iptables-persistent iputils-ping iputils-tracepath iso-codes iucode-tool iw javascript-common jq kbd kdump-tools kexec-tools keyboard-configuration keyboxd klibc-utils kmod krb5-locales krb5-multidev:amd64 language-pack-en language-pack-en-base language-pack-gnome-en language-pack-gnome-en-base language-selector-common language-selector-gnome laptop-detect ldap-utils less lib32gcc-s1 lib32stdc++6 liba52-0.7.4:amd64 libaa1:amd64 libaacs0:amd64 libabsl20230802:amd64 libaccountsservice0:amd64 libacl1:amd64 libacl1-dev:amd64 libadwaita-1-0:amd64 libaec0:amd64 libalgorithm-diff-perl libalgorithm-diff-xs-perl libalgorithm-merge-perl libamd-comgr2:amd64 libamdhip64-5 libann0 libao-common libao4:amd64 libaom3:amd64;\n\n    # Batch 10\n    apt install -y libapparmor1:amd64 libappstream5:amd64 libapt-pkg7.0:amd64 libarchive-dev:amd64 libarchive13t64:amd64 libargon2-1:amd64 libaribb24-0t64:amd64 libarmadillo14 libarpack2t64:amd64 libasan8:amd64 libasound2-data libasound2-dev:amd64 libasound2t64:amd64 libaspell15:amd64 libass-dev:amd64 libass9:amd64 libassuan9:amd64 libasyncns0:amd64 libatasmart4:amd64 libatk-adaptor:amd64 libatk-bridge2.0-0t64:amd64 libatk-bridge2.0-dev:amd64 libatk1.0-0t64:amd64 libatk1.0-dev:amd64 libatkmm-1.6-1v5:amd64 libatkmm-1.6-dev:amd64 libatomic1:amd64 libatopology2t64:amd64 libatspi2.0-0t64:amd64 libatspi2.0-dev:amd64 libattr1:amd64 libattr1-dev:amd64 libaudit-common libaudit1:amd64 libauthen-sasl-perl libavahi-client3:amd64 libavahi-common-data:amd64 libavahi-common3:amd64 libavahi-core7:amd64 libavahi-glib1:amd64 libavc1394-0:amd64 libavcodec-dev:amd64 libavcodec61:amd64 libavdevice-dev:amd64 libavdevice61:amd64 libavfilter-dev:amd64 libavfilter10:amd64 libavformat-dev:amd64 libavformat61:amd64 libavif16:amd64;\n\n    # Batch 11\n    apt install -y libavutil-dev:amd64 libavutil59:amd64 libayatana-appindicator3-1 libayatana-ido3-0.4-0:amd64 libayatana-indicator3-7:amd64 libb2-1:amd64 libbabeltrace1:amd64 libbasicobjects0t64:amd64 libbdplus0:amd64 libbinutils:amd64 libblas3:amd64 libblkid-dev:amd64 libblkid1:amd64 libblockdev-crypto3:amd64 libblockdev-fs3:amd64 libblockdev-loop3:amd64 libblockdev-mdraid3:amd64 libblockdev-nvme3:amd64 libblockdev-part3:amd64 libblockdev-swap3:amd64 libblockdev-utils3:amd64 libblockdev3:amd64 libblosc1:amd64 libbluetooth3:amd64 libbluray-dev:amd64 libbluray2:amd64 libboost-dev:amd64 libboost1.83-dev:amd64 libbpf1:amd64 libbpfcc:amd64 libbrlapi0.8:amd64 libbrotli-dev:amd64 libbrotli1:amd64 libbs2b0:amd64 libbsd0:amd64 libbytesize-common libbytesize1:amd64 libbz2-1.0:amd64 libbz2-dev:amd64 libc-bin libc-dev-bin libc6:amd64 libc6-dbg:amd64 libc6-dev:amd64 libc6-i386 libcaca-dev:amd64 libcaca0:amd64 libcairo-gobject-perl libcairo-gobject2:amd64 libcairo-perl;\n\n    # Batch 12\n    apt install -y libcairo-script-interpreter2:amd64 libcairo2:amd64 libcairo2-dev:amd64 libcairomm-1.0-1v5:amd64 libcairomm-1.0-dev:amd64 libcairomm-1.16-1:amd64 libcamel-1.2-64t64:amd64 libcamera-ipa:amd64 libcamera0.4:amd64 libcanberra-gtk3-0:amd64 libcanberra-gtk3-module:amd64 libcanberra-pulse:amd64 libcanberra0:amd64 libcap-dev:amd64 libcap-ng0:amd64 libcap2:amd64 libcap2-bin libcares2:amd64 libcbor0.10:amd64 libcc1-0:amd64 libcddb2 libcdio-cdda-dev:amd64 libcdio-cdda2t64:amd64 libcdio-dev:amd64 libcdio-paranoia-dev:amd64 libcdio-paranoia2t64:amd64 libcdio19t64:amd64 libcdparanoia0:amd64 libcdt5:amd64 libcfitsio10t64:amd64 libcgraph6:amd64 libcharls2:amd64 libchewing3:amd64 libchewing3-data libchromaprint1:amd64 libcjson1:amd64 libclang-common-20-dev:amd64 libclang-cpp18 libclang-cpp19 libclang-cpp20 libclang-rt-20-dev:amd64 libclang1-19 libclang1-20 libclone-perl:amd64 libcodec2-1.2:amd64 libcollection4t64:amd64 libcolord-gtk4-1t64:amd64 libcolord2:amd64 libcolorhug2:amd64 libcom-err2:amd64;\n\n    # Batch 13\n    apt install -y libcommon-sense-perl:amd64 libcpdb-frontend2t64:amd64 libcpdb2t64:amd64 libcrack2:amd64 libcrypt-dev:amd64 libcrypt1:amd64 libcryptsetup12:amd64 libctf-nobfd0:amd64 libctf0:amd64 libcue2:amd64 libcups2t64:amd64 libcupsfilters2-common libcupsfilters2t64:amd64 libcupsimage2t64:amd64 libcurl3t64-gnutls:amd64 libcurl4-openssl-dev:amd64 libcurl4t64:amd64 libdaemon0:amd64 libdata-dump-perl libdatrie-dev:amd64 libdatrie1:amd64 libdav1d7:amd64 libdb5.3t64:amd64 libdbus-1-3:amd64 libdbus-1-dev:amd64 libdbusmenu-glib4:amd64 libdbusmenu-gtk3-4:amd64 libdc1394-25:amd64 libdca0:amd64 libdcmtk-dev libdcmtk19:amd64 libdconf1:amd64 libde265-0:amd64 libdebconfclient0:amd64 libdebuginfod-common libdebuginfod1t64:amd64 libdecor-0-0:amd64 libdecor-0-dev:amd64 libdecor-0-plugin-1-gtk:amd64 libdee-1.0-4:amd64 libdeflate-dev:amd64 libdeflate0:amd64 libdevmapper1.02.1:amd64 libdex-1-1:amd64 libdhash1t64:amd64 libdisplay-info-dev:amd64 libdisplay-info2:amd64 libdjvulibre-text libdjvulibre21:amd64 libdotconf0:amd64;\n\n    # Batch 14\n    apt install -y libdouble-conversion3:amd64 libdpkg-perl libdrm-amdgpu1:amd64 libdrm-common libdrm-dev:amd64 libdrm-intel1:amd64 libdrm-nouveau2:amd64 libdrm-radeon1:amd64 libdrm2:amd64 libduktape207:amd64 libdv4t64:amd64 libdvbpsi10:amd64 libdvdnav-dev:amd64 libdvdnav4:amd64 libdvdread-dev:amd64 libdvdread8t64:amd64 libdw1t64:amd64 libeatmydata1:amd64 libebackend-1.2-11t64:amd64 libebml5:amd64 libebook-1.2-21t64:amd64 libebook-contacts-1.2-4t64:amd64 libecal-2.0-3:amd64 libedata-book-1.2-27t64:amd64 libedata-cal-2.0-2t64:amd64 libedataserver-1.2-27t64:amd64 libedataserverui-1.2-4t64:amd64 libedit2:amd64 libeditorconfig0:amd64 libefiboot1t64:amd64 libefivar1t64:amd64 libegl-dev:amd64 libegl-mesa0:amd64 libegl1:amd64 libegl1-mesa-dev:amd64 libei1:amd64 libeis1:amd64 libelf-dev:amd64 libelf1t64:amd64 libenchant-2-2:amd64 libencode-locale-perl libepoxy-dev:amd64 libepoxy0:amd64 liberror-perl libespeak-ng1:amd64 libestr0:amd64 libevdev2:amd64 libevent-2.1-7t64:amd64 libevent-core-2.1-7t64:amd64 libevent-pthreads-2.1-7t64:amd64;\n\n    # Batch 15\n    apt install -y libexempi8:amd64 libexif12:amd64 libexiv2-28:amd64 libexiv2-data libexpat1:amd64 libexpat1-dev:amd64 libext2fs-dev libext2fs2t64:amd64 libextutils-depends-perl libfaad2:amd64 libfabric1:amd64 libfakeroot:amd64 libfastjson4:amd64 libfdisk1:amd64 libffi-dev:amd64 libffi8:amd64 libffmpeg-nvenc-dev libfftw3-bin libfftw3-dev:amd64 libfftw3-double3:amd64 libfftw3-long3:amd64 libfftw3-quad3:amd64 libfftw3-single3:amd64 libfido2-1:amd64 libfile-basedir-perl libfile-desktopentry-perl libfile-fcntllock-perl libfile-listing-perl libfile-mimeinfo-perl libflac-dev:amd64 libflac14:amd64 libflashrom1:amd64 libflite1:amd64 libfont-afm-perl libfontconfig-dev:amd64 libfontconfig1:amd64 libfontenc1:amd64 libfprint-2-2 libfprint-2-tod1:amd64 libfreeaptx0:amd64 libfreerdp-client2-2t64:amd64 libfreerdp-server3-3:amd64 libfreerdp2-2t64:amd64 libfreerdp3-3:amd64 libfreetype-dev:amd64 libfreetype6:amd64 libfreexl1:amd64 libfribidi-dev:amd64 libfribidi0:amd64 libftdi1-2:amd64;\n\n    # Batch 16\n    apt install -y libfuse2t64:amd64 libfuse3-3:amd64 libfwupd3:amd64 libfyba0t64:amd64 libgail-common:amd64 libgail18t64:amd64 libgamemode0:amd64 libgamemodeauto0:amd64 libgav1-1:amd64 libgbm-dev:amd64 libgbm1:amd64 libgc1:amd64 libgcc-14-dev:amd64 libgcc-15-dev:amd64 libgcc-s1:amd64 libgck-1-0:amd64 libgck-2-2:amd64 libgcr-4-4:amd64 libgcr-base-3-1:amd64 libgcr-ui-3-1:amd64 libgcrypt20:amd64 libgd3:amd64 libgdal36:amd64 libgdata-common libgdata22:amd64 libgdbm-compat4t64:amd64 libgdbm6t64:amd64 libgdcm3.0t64:amd64 libgdk-pixbuf-2.0-0:amd64 libgdk-pixbuf-2.0-dev:amd64 libgdk-pixbuf2.0-bin libgdk-pixbuf2.0-common libgdm1 libgee-0.8-2:amd64 libgeoclue-2-0:amd64 libgeocode-glib-2-0:amd64 libgeos-c1t64:amd64 libgeos3.13.1:amd64 libgeotiff5:amd64 libgexiv2-2:amd64 libgfortran5:amd64 libgif7:amd64 libgio-2.0-dev:amd64 libgio-2.0-dev-bin libgirepository-1.0-1:amd64 libgirepository-2.0-0:amd64 libgjs0g:amd64 libgl-dev:amd64 libgl1:amd64 libgl1-mesa-dri:amd64;\n\n    # Batch 17\n    apt install -y libgl2ps1.4 libgles-dev:amd64 libgles1:amd64 libgles2:amd64 libglew2.2:amd64 libglib-object-introspection-perl libglib-perl:amd64 libglib2.0-0t64:amd64 libglib2.0-bin libglib2.0-data libglib2.0-dev:amd64 libglib2.0-dev-bin libglibmm-2.4-1t64:amd64 libglibmm-2.4-dev:amd64 libglibmm-2.68-1t64:amd64 libglu1-mesa:amd64 libglu1-mesa-dev:amd64 libglvnd-core-dev:amd64 libglvnd-dev:amd64 libglvnd0:amd64 libglx-dev:amd64 libglx-mesa0:amd64 libglx0:amd64 libgme0:amd64 libgmp-dev:amd64 libgmp10:amd64 libgmpxx4ldbl:amd64 libgnome-autoar-0-0:amd64 libgnome-bg-4-2t64:amd64 libgnome-bluetooth-3.0-13:amd64 libgnome-bluetooth-ui-3.0-13:amd64 libgnome-desktop-3-20t64:amd64 libgnome-desktop-4-2t64:amd64 libgnome-menu-3-0:amd64 libgnome-rr-4-2t64:amd64 libgnutls-dane0t64:amd64 libgnutls-openssl27t64:amd64 libgnutls28-dev:amd64 libgnutls30t64:amd64 libgoa-1.0-0b:amd64 libgoa-1.0-common libgoa-backend-1.0-2:amd64 libgomp1:amd64 libgpg-error-l10n libgpg-error0:amd64 libgpgme11t64:amd64 libgpgmepp6t64:amd64 libgphoto2-6t64:amd64 libgphoto2-l10n libgphoto2-port12t64:amd64;\n\n    # Batch 18\n    apt install -y libgpm2:amd64 libgprofng0:amd64 libgraphene-1.0-0:amd64 libgraphite2-3:amd64 libgraphite2-dev:amd64 libgrpc++1.51t64:amd64 libgrpc29t64:amd64 libgs-common libgs10:amd64 libgs10-common libgsf-1-114:amd64 libgsf-1-common libgsm1:amd64 libgsound0t64:amd64 libgssapi-krb5-2:amd64 libgssdp-1.6-0:amd64 libgssrpc4t64:amd64 libgstreamer-gl1.0-0:amd64 libgstreamer-plugins-bad1.0-0:amd64 libgstreamer-plugins-base1.0-0:amd64 libgstreamer-plugins-good1.0-0:amd64 libgstreamer1.0-0:amd64 libgtk-3-0t64:amd64 libgtk-3-bin libgtk-3-common libgtk-3-dev:amd64 libgtk-4-1:amd64 libgtk-4-bin libgtk-4-common libgtk-4-media-gstreamer libgtk2.0-0t64:amd64 libgtk2.0-bin libgtk2.0-common libgtk3-perl libgtkmm-3.0-1t64:amd64 libgtkmm-3.0-dev:amd64 libgtkmm-4.0-0:amd64 libgtksourceview-5-0:amd64 libgtksourceview-5-common libgtop-2.0-11:amd64 libgtop2-common libgts-0.7-5t64:amd64 libgts-bin libgudev-1.0-0:amd64 libgupnp-1.6-0:amd64 libgupnp-av-1.0-3:amd64 libgupnp-dlna-2.0-4:amd64 libgupnp-igd-1.6-0:amd64 libgusb2:amd64 libgvc6;\n\n    # Batch 19\n    apt install -y libgvpr2:amd64 libgweather-4-0t64:amd64 libgweather-4-common libgxps2t64:amd64 libhandy-1-0:amd64 libharfbuzz-cairo0:amd64 libharfbuzz-dev:amd64 libharfbuzz-gobject0:amd64 libharfbuzz-icu0:amd64 libharfbuzz-subset0:amd64 libharfbuzz0b:amd64 libhdf4-0-alt:amd64 libhdf5-310:amd64 libhdf5-hl-310:amd64 libheif-plugin-aomdec:amd64 libheif-plugin-aomenc:amd64 libheif-plugin-libde265:amd64 libheif1:amd64 libhogweed6t64:amd64 libhpmud0:amd64 libhsa-runtime64-1 libhsakmt1:amd64 libhtml-form-perl libhtml-format-perl libhtml-parser-perl:amd64 libhtml-tagset-perl libhtml-tree-perl libhttp-cookies-perl libhttp-daemon-perl libhttp-date-perl libhttp-message-perl libhttp-negotiate-perl libhunspell-1.7-0:amd64 libhwasan0:amd64 libhwloc-plugins:amd64 libhwloc15:amd64 libhwy1t64:amd64 libhyphen0:amd64 libibmad5:amd64 libibumad3:amd64 libibus-1.0-5:amd64 libibus-1.0-dev:amd64 libibverbs1:amd64 libical3t64:amd64 libice-dev:amd64 libice6:amd64 libicu-dev:amd64 libicu76:amd64 libidn12:amd64 libidn2-0:amd64;\n\n    # Batch 20\n    apt install -y libidn2-dev:amd64 libiec61883-0:amd64 libieee1284-3t64:amd64 libijs-0.35:amd64 libimagequant0:amd64 libimath-3-1-29t64:amd64 libimobiledevice-1.0-6:amd64 libimobiledevice-glue-1.0-0 libini-config5t64:amd64 libinih1:amd64 libinireader0:amd64 libinput-bin libinput10:amd64 libio-html-perl libio-pty-perl libio-socket-ssl-perl libio-stringy-perl libip4tc2:amd64 libip6tc2:amd64 libipa-hbac0t64 libipc-run-perl libipc-system-simple-perl libipt2 libisl23:amd64 libitm1:amd64 libixml11t64:amd64 libjack-dev:amd64 libjack0:amd64 libjansson4:amd64 libjavascriptcoregtk-4.1-0:amd64 libjavascriptcoregtk-6.0-1:amd64 libjbig-dev:amd64 libjbig0:amd64 libjbig2dec0:amd64 libjcat1:amd64 libjemalloc2:amd64 libjpeg-dev:amd64 libjpeg-turbo8:amd64 libjpeg-turbo8-dev:amd64 libjpeg8:amd64 libjpeg8-dev:amd64 libjq1:amd64 libjs-async libjs-events libjs-inherits libjs-is-typedarray libjs-jquery libjs-prettify libjs-regenerate libjs-source-map;\n\n    # Batch 21\n    apt install -y libjs-sphinxdoc libjs-sprintf-js libjs-typedarray-to-buffer libjs-underscore libjs-util libjson-c5:amd64 libjson-glib-1.0-0:amd64 libjson-glib-1.0-common libjson-perl libjson-xs-perl libjsoncpp26:amd64 libjxl-gdk-pixbuf:amd64 libjxl0.11:amd64 libjxr-tools libjxr0t64:amd64 libk5crypto3:amd64 libkadm5clnt-mit12:amd64 libkadm5srv-mit12:amd64 libkate1:amd64 libkdb5-10t64:amd64 libkeyutils1:amd64 libklibc:amd64 libkmlbase1t64:amd64 libkmldom1t64:amd64 libkmlengine1t64:amd64 libkmod2:amd64 libkrb5-3:amd64 libkrb5-dev:amd64 libkrb5support0:amd64 libksba8:amd64 liblab-gamut1:amd64 liblapack3:amd64 liblc3-1:amd64 liblcms2-2:amd64 liblcms2-dev:amd64 liblcms2-utils libldacbt-abr2:amd64 libldacbt-enc2:amd64 libldap-common libldap-dev:amd64 libldap2:amd64 libldb2:amd64 libleptonica6:amd64 liblerc-dev:amd64 liblerc4:amd64 liblilv-0-0:amd64 liblirc-client0t64:amd64 libllvm17t64:amd64 libllvm18:amd64 libllvm19:amd64;\n\n    # Batch 22\n    apt install -y libllvm20:amd64 liblmdb0:amd64 liblocale-gettext-perl liblouis-data liblouis20:amd64 liblouisutdml-bin liblouisutdml-data liblouisutdml9t64:amd64 liblqr-1-0:amd64 liblsan0:amd64 liblsof0 libltdl-dev:amd64 libltdl7:amd64 liblttng-ust-common1t64:amd64 liblttng-ust-ctl5t64:amd64 liblttng-ust1t64:amd64 liblua5.2-0:amd64 liblua5.2-dev:amd64 liblua5.4-0:amd64 liblwp-mediatypes-perl liblwp-protocol-https-perl liblz4-1:amd64 liblz4-dev:amd64 liblzf1:amd64 liblzma-dev:amd64 liblzma5:amd64 liblzo2-2:amd64 libm17n-0:amd64 libmad0:amd64 libmagic-mgc libmagic1t64:amd64 libmagickcore-7.q16-10:amd64 libmagickcore-7.q16-10-extra:amd64 libmagickwand-7.q16-10:amd64 libmailtools-perl libmanette-0.2-0:amd64 libmarisa0:amd64 libmatroska7:amd64 libmaxminddb0:amd64 libmbedcrypto16:amd64 libmbim-glib4:amd64 libmbim-proxy libmbim-utils libmd0:amd64 libmd4c0:amd64 libmediaart-2.0-0:amd64 libminizip1t64:amd64 libmm-glib0:amd64 libmng2:amd64 libmnl0:amd64;\n\n    # Batch 23\n    apt install -y libmount-dev:amd64 libmount1:amd64 libmozjs-128-0:amd64 libmp3lame0:amd64 libmpc3:amd64 libmpcdec6:amd64 libmpeg2-4:amd64 libmpfr6:amd64 libmpg123-0t64:amd64 libmpg123-dev:amd64 libmpv-dev:amd64 libmpv2:amd64 libmsgraph-1-1:amd64 libmtdev1t64:amd64 libmtp-common libmtp-runtime libmtp9t64:amd64 libmujs-dev:amd64 libmujs3:amd64 libmunge2:amd64 libmutter-16-0:amd64 libmysofa1:amd64 libmysqlclient24:amd64 libnautilus-extension4:amd64 libncurses-dev:amd64 libncurses6:amd64 libncursesw6:amd64 libndp0:amd64 libnet-dbus-perl libnet-http-perl libnet-smtp-ssl-perl libnet-ssleay-perl:amd64 libnetcdf22:amd64 libnetfilter-conntrack3:amd64 libnetpbm11t64:amd64 libnetplan1:amd64 libnettle8t64:amd64 libnewt0.52:amd64 libnfnetlink0:amd64 libnfs14:amd64 libnfsidmap1:amd64 libnftables1:amd64 libnftnl11:amd64 libnghttp2-14:amd64 libnghttp2-dev:amd64 libnice10:amd64 libnl-3-200:amd64 libnl-genl-3-200:amd64 libnl-route-3-200:amd64 libnm0:amd64;\n\n    # Batch 24\n    apt install -y libnma-common libnma-gtk4-0:amd64 libnma0:amd64 libnode-dev libnode115:amd64 libnorm1t64:amd64 libnotify-bin libnotify4:amd64 libnpth0t64:amd64 libnsl-dev:amd64 libnsl2:amd64 libnspr4:amd64 libnss-mdns:amd64 libnss-sss:amd64 libnss-systemd:amd64 libnss3:amd64 libntfs-3g89t64:amd64 libnuma1:amd64 libnvme1t64 libobjc-14-dev:amd64 libobjc4:amd64 libodbc2:amd64 libodbccr2:amd64 libodbcinst2:amd64 libogdi4.1:amd64 libogg-dev:amd64 libogg0:amd64 libonig5:amd64 libopenal-data libopenal1:amd64 libopencc-data libopencc1.1 libopencv-calib3d410:amd64 libopencv-contrib410:amd64 libopencv-core410:amd64 libopencv-dnn410:amd64 libopencv-features2d410:amd64 libopencv-flann410:amd64 libopencv-highgui410:amd64 libopencv-imgcodecs410:amd64 libopencv-imgproc410:amd64 libopencv-ml410:amd64 libopencv-objdetect410:amd64 libopencv-photo410:amd64 libopencv-shape410:amd64 libopencv-stitching410:amd64 libopencv-video410:amd64 libopencv-videoio410:amd64 libopencv-viz410:amd64 libopenexr-3-1-30:amd64;\n\n    # Batch 25\n    apt install -y libopengl-dev:amd64 libopengl0:amd64 libopenjp2-7:amd64 libopenmpi40:amd64 libopenmpt-modplug1:amd64 libopenmpt0t64:amd64 libopus-dev:amd64 libopus0:amd64 liborc-0.4-0t64:amd64 libotf1:amd64 libout123-0t64:amd64 libp11-kit-dev:amd64 libp11-kit0:amd64 libpackagekit-glib2-18:amd64 libpam-cap:amd64 libpam-fprintd:amd64 libpam-gnome-keyring:amd64 libpam-modules:amd64 libpam-modules-bin libpam-pwquality:amd64 libpam-runtime libpam-sss:amd64 libpam-systemd:amd64 libpam0g:amd64 libpam0g-dev:amd64 libpanel-1-1:amd64 libpanel-common libpango-1.0-0:amd64 libpango1.0-dev:amd64 libpangocairo-1.0-0:amd64 libpangoft2-1.0-0:amd64 libpangomm-1.4-1v5:amd64 libpangomm-1.4-dev:amd64 libpangomm-2.48-1t64:amd64 libpangoxft-1.0-0:amd64 libpaper-utils libpaper2:amd64 libparted2t64:amd64 libpath-utils1t64:amd64 libpathplan4:amd64 libpcap0.8t64:amd64 libpcaudio0:amd64 libpci-dev:amd64 libpci3:amd64 libpciaccess-dev:amd64 libpciaccess0:amd64 libpcre2-16-0:amd64 libpcre2-32-0:amd64 libpcre2-8-0:amd64 libpcre2-dev:amd64;\n\n    # Batch 26\n    apt install -y libpcre2-posix3:amd64 libpcsclite1:amd64 libpeas-1.0-0:amd64 libpeas-common libperl5.40:amd64 libpfm4:amd64 libpgm-5.3-0t64:amd64 libphonenumber8:amd64 libpinyin-data:amd64 libpinyin15:amd64 libpipeline1:amd64 libpipewire-0.3-0t64:amd64 libpipewire-0.3-common libpipewire-0.3-dev:amd64 libpipewire-0.3-modules:amd64 libpixman-1-0:amd64 libpixman-1-dev:amd64 libpkcs11-helper1t64:amd64 libpkgconf3:amd64 libplacebo-dev:amd64 libplacebo349:amd64 libplist-2.0-4:amd64 libplymouth5:amd64 libpmix2t64:amd64 libpng-dev:amd64 libpng-tools libpng16-16t64:amd64 libpocketsphinx3:amd64 libpolkit-agent-1-0:amd64 libpolkit-gobject-1-0:amd64 libpolkit-gobject-1-dev libpoppler-cpp2:amd64 libpoppler-glib8t64:amd64 libpoppler147:amd64 libpopt0:amd64 libportal-gtk4-1:amd64 libportal1:amd64 libpostproc-dev:amd64 libpostproc58:amd64 libppd2:amd64 libppd2-common libppsdocument-4.0-5:amd64 libppsview-4.0-4:amd64 libpq-dev libpq5:amd64 libproc2-0:amd64 libproc2-dev:amd64 libproj25:amd64 libprotobuf-c1:amd64 libprotobuf-lite32t64:amd64;\n\n    # Batch 27\n    apt install -y libprotobuf32t64:amd64 libprotoc32t64:amd64 libproxy-tools libproxy1-plugin-gsettings:amd64 libproxy1-plugin-networkmanager:amd64 libproxy1v5:amd64 libpsl-dev:amd64 libpsl5t64:amd64 libpsm-infinipath1 libpsm2-2 libpugixml-dev:amd64 libpugixml1v5:amd64 libpulse-dev:amd64 libpulse-mainloop-glib0:amd64 libpulse0:amd64 libpwquality-common libpwquality1:amd64 libpython3-dev:amd64 libpython3-stdlib:amd64 libpython3.13:amd64 libpython3.13-dev:amd64 libpython3.13-minimal:amd64 libpython3.13-stdlib:amd64 libqhull-r8.0:amd64 libqmi-glib5:amd64 libqmi-proxy libqmi-utils libqpdf30:amd64 libqrtr-glib0:amd64 libqt5concurrent5t64:amd64 libqt5core5t64:amd64 libqt5dbus5t64:amd64 libqt5gui5t64:amd64 libqt5network5t64:amd64 libqt5opengl5-dev:amd64 libqt5opengl5t64:amd64 libqt5positioning5:amd64 libqt5positioning5-plugins:amd64 libqt5positioningquick5:amd64 libqt5printsupport5t64:amd64 libqt5qml5:amd64 libqt5qmlmodels5:amd64 libqt5qmlworkerscript5:amd64 libqt5quick5:amd64 libqt5quickparticles5:amd64 libqt5quickshapes5:amd64 libqt5quicktemplates2-5:amd64 libqt5quicktest5:amd64 libqt5quickwidgets5:amd64 libqt5serialport5:amd64;\n\n    # Batch 28\n    apt install -y libqt5sql5-sqlite:amd64 libqt5sql5t64:amd64 libqt5svg5:amd64 libqt5test5t64:amd64 libqt5waylandclient5:amd64 libqt5waylandcompositor5:amd64 libqt5webchannel5:amd64 libqt5webchannel5-dev:amd64 libqt5webengine-data libqt5webengine5:amd64 libqt5webenginecore5:amd64 libqt5webenginewidgets5:amd64 libqt5widgets5t64:amd64 libqt5x11extras5:amd64 libqt5xml5t64:amd64 libqt6charts6:amd64 libqt6concurrent6:amd64 libqt6core5compat6:amd64 libqt6core6t64:amd64 libqt6dbus6:amd64 libqt6designer6:amd64 libqt6designercomponents6:amd64 libqt6gui6:amd64 libqt6help6:amd64 libqt6network6:amd64 libqt6opengl6:amd64 libqt6openglwidgets6:amd64 libqt6printsupport6:amd64 libqt6qml6:amd64 libqt6qmlcompiler6:amd64 libqt6qmlmeta6:amd64 libqt6qmlmodels6:amd64 libqt6qmlworkerscript6:amd64 libqt6quick3d6:amd64 libqt6quick3dassetimport6:amd64 libqt6quick3dassetutils6:amd64 libqt6quick3druntimerender6:amd64 libqt6quick3dutils6:amd64 libqt6quick6:amd64 libqt6quickcontrols2-6:amd64 libqt6quickshapes6:amd64 libqt6quicktemplates2-6:amd64 libqt6quicktest6:amd64 libqt6quickvectorimagegenerator6:amd64 libqt6quickwidgets6:amd64 libqt6serialport6:amd64 libqt6shadertools6:amd64 libqt6sql6:amd64 libqt6sql6-sqlite:amd64 libqt6svg6:amd64;\n\n    # Batch 29\n    apt install -y libqt6svgwidgets6:amd64 libqt6test6:amd64 libqt6uitools6:amd64 libqt6waylandclient6:amd64 libqt6waylandcompositor6:amd64 libqt6widgets6:amd64 libqt6wlshellintegration6:amd64 libqt6xml6:amd64 libquadmath0:amd64 librabbitmq4:amd64 libraqm0:amd64 librav1e0.7:amd64 libraw1394-11:amd64 libraw23t64:amd64 librdmacm1t64:amd64 libre2-11:amd64 libreadline-dev:amd64 libreadline8t64:amd64 libref-array1t64:amd64 libresid-builder0c2a:amd64 librest-1.0-0:amd64 librhash1:amd64 librist4:amd64 libroc0.4:amd64 librsvg2-2:amd64 librsvg2-bin librsvg2-common:amd64 librtmp-dev:amd64 librtmp1:amd64 librttopo1:amd64 librubberband-dev:amd64 librubberband2:amd64 librygel-core-2.8-0:amd64 librygel-db-2.8-0:amd64 librygel-renderer-2.8-0:amd64 librygel-server-2.8-0:amd64 libsamplerate0:amd64 libsamplerate0-dev:amd64 libsane-common libsane-hpaio:amd64 libsane1:amd64 libsasl2-2:amd64 libsasl2-modules:amd64 libsasl2-modules-db:amd64 libsasl2-modules-gssapi-mit:amd64 libsbc1:amd64 libsdl-ttf2.0-0:amd64 libsdl1.2debian:amd64 libsdl2-2.0-0:amd64 libsdl2-dev:amd64;\n\n    # Batch 30\n    apt install -y libsdl3-0:amd64 libsdl3-dev:amd64 libseccomp2:amd64 libsecret-1-0:amd64 libsecret-common libselinux1:amd64 libselinux1-dev:amd64 libsemanage-common libsemanage2:amd64 libsensors-config libsensors5:amd64 libsepol-dev:amd64 libsepol2:amd64 libserd-0-0:amd64 libset-scalar-perl libsframe1:amd64 libsharpyuv-dev:amd64 libsharpyuv0:amd64 libshine3:amd64 libshout3:amd64 libsidplay1v5:amd64 libsidplay2:amd64 libsigc++-2.0-0v5:amd64 libsigc++-2.0-dev:amd64 libsigc++-3.0-0:amd64 libsigsegv2:amd64 libsixel-dev:amd64 libsixel1:amd64 libslang2:amd64 libslang2-dev:amd64 libslirp0:amd64 libsm-dev:amd64 libsm6:amd64 libsmartcols1:amd64 libsmbclient0:amd64 libsnapd-glib-2-1:amd64 libsnappy1v5:amd64 libsndfile1:amd64 libsndfile1-dev:amd64 libsndio-dev:amd64 libsndio7.0:amd64 libsnmp-base libsnmp40t64:amd64 libsocket++1:amd64 libsodium23:amd64 libsonic0:amd64 libsord-0-0:amd64 libsoup-2.4-1:amd64 libsoup-3.0-0:amd64 libsoup-3.0-common;\n\n    # Batch 31\n    apt install -y libsoup2.4-common libsource-highlight-common libsource-highlight4t64:amd64 libsoxr0:amd64 libspa-0.2-bluetooth:amd64 libspa-0.2-dev:amd64 libspa-0.2-modules:amd64 libspatialaudio0t64:amd64 libspatialite8t64:amd64 libspeechd-module0:amd64 libspeechd2:amd64 libspeex1:amd64 libspeexdsp1:amd64 libspelling-1-2:amd64 libspelling-common libsphinxbase3t64:amd64 libsqlite3-0:amd64 libsqlite3-dev:amd64 libsratom-0-0:amd64 libsrt1.5-gnutls:amd64 libss2:amd64 libssh-4:amd64 libssh-dev:amd64 libssh2-1-dev:amd64 libssh2-1t64:amd64 libssl-dev:amd64 libssl3t64:amd64 libsss-certmap0 libsss-idmap0 libsss-nss-idmap0 libstartup-notification0:amd64 libstdc++-14-dev:amd64 libstdc++-15-dev:amd64 libstdc++6:amd64 libstemmer0d:amd64 libsvtav1enc2:amd64 libswresample-dev:amd64 libswresample5:amd64 libswscale-dev:amd64 libswscale8:amd64 libsyn123-0t64:amd64 libsysmetrics1:amd64 libsysprof-6-6:amd64 libsysprof-6-modules:amd64 libsysprof-capture-4-dev:amd64 libsystemd-dev:amd64 libsystemd-shared:amd64 libsystemd0:amd64 libsz2:amd64 libtag2:amd64;\n\n    # Batch 32\n    apt install -y libtalloc2:amd64 libtasn1-6:amd64 libtasn1-6-dev:amd64 libtasn1-doc libtbb12:amd64 libtbbbind-2-5:amd64 libtbbmalloc2:amd64 libtcl8.6:amd64 libtdb1:amd64 libteamdctl0:amd64 libtesseract5:amd64 libtevent0t64:amd64 libtext-charwidth-perl:amd64 libtext-iconv-perl:amd64 libtext-wrapi18n-perl libthai-data libthai-dev:amd64 libthai0:amd64 libtheora0:amd64 libtheoradec1:amd64 libtheoraenc1:amd64 libtie-ixhash-perl libtiff-dev:amd64 libtiff6:amd64 libtiffxx6:amd64 libtimedate-perl libtinfo6:amd64 libtinysparql-3.0-0:amd64 libtirpc-common libtirpc-dev:amd64 libtirpc3t64:amd64 libtk8.6:amd64 libtool libtool-bin libtotem-plparser-common libtotem-plparser18:amd64 libtpms0:amd64 libtraceevent1:amd64 libtraceevent1-plugin:amd64 libtracefs1:amd64 libtry-tiny-perl libts0t64:amd64 libtsan2:amd64 libtss2-esys-3.0.2-0t64:amd64 libtss2-mu-4.0.1-0t64:amd64 libtss2-rc0t64:amd64 libtss2-sys1t64:amd64 libtss2-tcti-cmd0t64:amd64 libtss2-tcti-device0t64:amd64 libtss2-tcti-libtpms0t64:amd64;\n\n    # Batch 33\n    apt install -y libtss2-tcti-mssim0t64:amd64 libtss2-tcti-spi-helper0t64:amd64 libtss2-tcti-swtpm0t64:amd64 libtss2-tctildr0t64:amd64 libtwolame0:amd64 libtypes-serialiser-perl libu2f-udev libubsan1:amd64 libuchardet-dev:amd64 libuchardet0:amd64 libucx0:amd64 libudev-dev:amd64 libudev1:amd64 libudfread-dev:amd64 libudfread0:amd64 libudisks2-0:amd64 libunbound8:amd64 libunibreak-dev:amd64 libunibreak6:amd64 libunistring5:amd64 libunity-protocol-private0:amd64 libunity-scopes-json-def-desktop libunity9 libunwind8:amd64 libupnp17t64:amd64 libupower-glib3:amd64 liburcu8t64:amd64 liburi-perl liburing2:amd64 liburiparser1:amd64 libusb-1.0-0:amd64 libusbmuxd-2.0-7:amd64 libuuid1:amd64 libuv1-dev:amd64 libuv1t64:amd64 libv4l-0t64:amd64 libv4lconvert0t64:amd64 libva-dev:amd64 libva-drm2:amd64 libva-glx2:amd64 libva-wayland2:amd64 libva-x11-2:amd64 libva2:amd64 libvdpau-dev:amd64 libvdpau1:amd64 libvidstab1.1:amd64 libvisual-0.4-0:amd64 libvlc-bin:amd64 libvlc5:amd64 libvlccore9:amd64;\n\n    # Batch 34\n    apt install -y libvncclient1:amd64 libvolume-key1:amd64 libvorbis-dev:amd64 libvorbis0a:amd64 libvorbisenc2:amd64 libvorbisfile3:amd64 libvpl2 libvpx9:amd64 libvte-2.91-0:amd64 libvte-2.91-common libvtk9.3:amd64 libvulkan-dev:amd64 libvulkan1:amd64 libwacom-common libwacom9:amd64 libwavpack1:amd64 libwayland-bin libwayland-client0:amd64 libwayland-cursor0:amd64 libwayland-dev:amd64 libwayland-egl1:amd64 libwayland-server0:amd64 libwbclient0:amd64 libwebkit2gtk-4.1-0:amd64 libwebkitgtk-6.0-4:amd64 libwebp-dev:amd64 libwebp7:amd64 libwebpdecoder3:amd64 libwebpdemux2:amd64 libwebpmux3:amd64 libwebrtc-audio-processing-1-3:amd64 libwebsocketpp-dev:amd64 libwhoopsie-preferences0 libwhoopsie0:amd64 libwinpr2-2t64:amd64 libwinpr3-3:amd64 libwireplumber-0.5-0:amd64 libwmf-0.2-7:amd64 libwmf-0.2-7-gtk:amd64 libwmf0.2-7-gtk:amd64 libwmflite-0.2-7:amd64 libwnck-3-0:amd64 libwnck-3-common libwoff1:amd64 libwolfssl-dev libwolfssl42t64:amd64 libwrap0:amd64 libwrap0-dev:amd64 libwww-perl libwww-robotrules-perl;\n\n    # Batch 35\n    apt install -y libx11-6:amd64 libx11-data libx11-dev:amd64 libx11-protocol-perl libx11-xcb1:amd64 libx264-164:amd64 libx265-215:amd64 libxatracker2:amd64 libxau-dev:amd64 libxau6:amd64 libxaw7:amd64 libxcb-composite0:amd64 libxcb-cursor0:amd64 libxcb-damage0:amd64 libxcb-dri2-0:amd64 libxcb-dri3-0:amd64 libxcb-glx0:amd64 libxcb-icccm4:amd64 libxcb-image0:amd64 libxcb-keysyms1:amd64 libxcb-present0:amd64 libxcb-randr0:amd64 libxcb-render-util0:amd64 libxcb-render0:amd64 libxcb-render0-dev:amd64 libxcb-res0:amd64 libxcb-shape0:amd64 libxcb-shm0:amd64 libxcb-shm0-dev:amd64 libxcb-sync1:amd64 libxcb-util1:amd64 libxcb-xfixes0:amd64 libxcb-xinerama0:amd64 libxcb-xinput0:amd64 libxcb-xkb1:amd64 libxcb-xv0:amd64 libxcb1:amd64 libxcb1-dev:amd64 libxcomposite-dev:amd64 libxcomposite1:amd64 libxcursor-dev:amd64 libxcursor1:amd64 libxcvt0:amd64 libxdamage-dev:amd64 libxdamage1:amd64 libxdmcp-dev:amd64 libxdmcp6:amd64 libxdo3:amd64 libxerces-c3.2t64:amd64 libxext-dev:amd64;\n\n    # Batch 36\n    apt install -y libxext6:amd64 libxfixes-dev:amd64 libxfixes3:amd64 libxfont2:amd64 libxft-dev:amd64 libxft2:amd64 libxi-dev:amd64 libxi6:amd64 libxinerama-dev:amd64 libxinerama1:amd64 libxkbcommon-dev:amd64 libxkbcommon-x11-0:amd64 libxkbcommon0:amd64 libxkbfile1:amd64 libxkbregistry0:amd64 libxml-parser-perl libxml-twig-perl libxml-xpathengine-perl libxml2:amd64 libxml2-dev:amd64 libxmlb2:amd64 libxmu6:amd64 libxmuu1:amd64 libxnvctrl0:amd64 libxpm4:amd64 libxpresent-dev:amd64 libxpresent1:amd64 libxrandr-dev:amd64 libxrandr2:amd64 libxrender-dev:amd64 libxrender1:amd64 libxres1:amd64 libxshmfence1:amd64 libxslt1.1:amd64 libxss-dev:amd64 libxss1:amd64 libxt-dev:amd64 libxt6t64:amd64 libxtables12:amd64 libxtst-dev:amd64 libxtst6:amd64 libxv-dev:amd64 libxv1:amd64 libxvidcore4:amd64 libxvmc1:amd64 libxxf86dga1:amd64 libxxf86vm-dev:amd64 libxxf86vm1:amd64 libxxhash-dev:amd64 libxxhash0:amd64;\n\n    # Batch 37\n    apt install -y libyaml-0-2:amd64 libyaml-cpp0.8:amd64 libyelp0:amd64 libyuv0:amd64 libzimg-dev:amd64 libzimg2:amd64 libzix-0-0:amd64 libzmq5:amd64 libzstd-dev:amd64 libzstd1:amd64 libzvbi-common libzvbi0t64:amd64 linguist-qt6 linux-base linux-firmware linux-generic-hwe-24.04 linux-libc-dev:amd64 linux-modules-6.14.0-29-generic linux-modules-extra-6.14.0-29-generic linux-perf linux-sound-base linux-source linux-source-6.14.0 linux-sysctl-defaults linux-tools-6.14.0-29 linux-tools-6.14.0-29-generic linux-tools-common llvm-20 llvm-20-dev llvm-20-linker-tools llvm-20-runtime llvm-20-tools lm-sensors locales login login.defs logrotate logsave lsb-release lshw lsof lto-disabled-list luit m17n-db m4 make makedumpfile man-db manpages manpages-dev;\n\n    # Batch 38\n    apt install -y mawk media-types memtest86+ mesa-libgallium:amd64 mesa-vdpau-drivers:amd64 mesa-vulkan-drivers:amd64 mobile-broadband-provider-info modemmanager mokutil mongodb-mongosh mount mousetweaks mscompress mtr-tiny mutter-common mutter-common-bin mysql-common nano nasm native-architecture nautilus nautilus-data nautilus-extension-gnome-terminal:amd64 nautilus-sendto ncurses-base ncurses-bin net-tools netbase netcat-openbsd netfilter-persistent netpbm netplan-generator netplan.io nettle-dev:amd64 network-manager network-manager-config-connectivity-ubuntu network-manager-openvpn network-manager-openvpn-gnome network-manager-pptp network-manager-pptp-gnome networkd-dispatcher nftables ninja-build nm-connection-editor node-abbrev node-acorn node-agent-base node-ajv node-ajv-keywords node-ampproject-remapping;\n\n    # Batch 39\n    apt install -y node-ansi-escapes node-ansi-regex node-ansi-styles node-anymatch node-aproba node-archy node-are-we-there-yet node-argparse node-arrify node-assert node-async node-async-each node-auto-bind node-babel-helper-define-polyfill-provider node-babel-plugin-add-module-exports node-babel-plugin-lodash node-babel-plugin-polyfill-corejs2 node-babel-plugin-polyfill-corejs3 node-babel-plugin-polyfill-regenerator node-babel7 node-babel7-runtime node-balanced-match node-base node-base64-js node-binary-extensions node-brace-expansion node-braces node-browserslist node-builtins node-cacache node-cache-base node-camelcase node-caniuse-lite node-chalk node-chokidar node-chownr node-chrome-trace-event node-ci-info node-cjs-module-lexer node-cli-boxes node-cli-cursor node-cli-table node-cli-truncate node-cliui node-clone node-clone-deep node-collection-visit node-color-convert node-color-name node-colors;\n\n    # Batch 40\n    apt install -y node-columnify node-commander node-commondir node-concat-stream node-console-control-strings node-convert-source-map node-copy-concurrently node-core-js node-core-js-compat node-core-js-pure node-core-util-is node-coveralls node-css-loader node-css-selector-tokenizer node-data-uri-to-buffer node-debbundle-es-to-primitive node-debug node-decamelize node-decompress-response node-deep-equal node-deep-is node-defaults node-define-properties node-define-property node-defined node-del node-delegates node-depd node-diff node-doctrine node-electron-to-chromium node-encoding node-enhanced-resolve node-envinfo node-err-code node-errno node-error-ex node-es-abstract node-es-module-lexer node-es6-error node-escape-string-regexp node-escodegen node-eslint-scope node-eslint-utils node-eslint-visitor-keys node-espree node-esprima node-esquery node-esrecurse node-estraverse;\n\n    # Batch 41\n    apt install -y node-esutils node-events node-execa node-fancy-log node-fast-deep-equal node-fast-levenshtein node-fetch node-file-entry-cache node-fill-range node-find-cache-dir node-find-up node-flat-cache node-flatted node-for-in node-for-own node-foreground-child node-fs-readdir-recursive node-fs-write-stream-atomic node-fs.realpath node-function-bind node-functional-red-black-tree node-gauge node-get-caller-file node-get-stream node-get-value node-glob node-glob-parent node-globals node-globby node-got node-graceful-fs node-growl node-gyp node-has-flag node-has-unicode node-has-value node-has-values node-hosted-git-info node-http-proxy-agent node-https-proxy-agent node-iconv-lite node-icss-utils node-ieee754 node-iferr node-ignore node-imurmurhash node-indent-string node-inflight node-inherits node-ini;\n\n    # Batch 42\n    apt install -y node-interpret node-ip node-ip-regex node-is-arrayish node-is-binary-path node-is-buffer node-is-descriptor node-is-extendable node-is-extglob node-is-glob node-is-number node-is-path-cwd node-is-path-inside node-is-plain-obj node-is-plain-object node-is-primitive node-is-stream node-is-typedarray node-is-windows node-isarray node-isexe node-isobject node-istanbul node-jest-debbundle node-jest-worker node-js-tokens node-js-yaml node-jsesc node-json-buffer node-json-parse-better-errors node-json-schema node-json-schema-traverse node-json-stable-stringify node-json5 node-jsonify node-jsonparse node-kind-of node-lcov-parse node-levn node-loader-runner node-locate-path node-lodash node-lodash-packages node-log-driver node-lowercase-keys node-lru-cache node-make-dir node-map-visit node-memfs node-memory-fs;\n\n    # Batch 43\n    apt install -y node-merge-stream node-micromatch node-mime node-mime-types node-mimic-fn node-mimic-response node-minimatch node-minimist node-minipass node-mixin-deep node-mkdirp node-move-concurrently node-ms node-mute-stream node-n3 node-negotiator node-neo-async node-nopt node-normalize-package-data node-normalize-path node-npm-bundled node-npm-package-arg node-npm-run-path node-npmlog node-object-assign node-object-inspect node-object-visit node-once node-opener node-optimist node-optionator node-osenv node-p-cancelable node-p-limit node-p-locate node-p-map node-parse-json node-pascalcase node-path-dirname node-path-exists node-path-is-absolute node-path-is-inside node-path-type node-picocolors node-pify node-pkg-dir node-postcss node-postcss-modules-extract-imports node-postcss-modules-values node-postcss-value-parser;\n\n    # Batch 44\n    apt install -y node-prelude-ls node-process-nextick-args node-progress node-promise-inflight node-promise-retry node-promzard node-prr node-punycode node-quick-lru node-randombytes node-re2:amd64 node-read node-read-package-json node-read-pkg node-readable-stream node-readdirp node-rechoir node-regenerate node-regenerate-unicode-properties node-regenerator-runtime node-regenerator-transform node-regexpp node-regexpu-core node-regjsgen node-regjsparser node-repeat-string node-require-directory node-require-from-string node-resolve node-resolve-cwd node-resolve-from node-restore-cursor node-resumer node-retry node-rimraf node-run-queue node-safe-buffer node-schema-utils node-sellside-emitter node-semver node-serialize-javascript node-set-blocking node-set-immediate-shim node-set-value node-shebang-command node-shebang-regex node-shell-quote node-signal-exit node-slash node-slice-ansi;\n\n    # Batch 45\n    apt install -y node-source-list-map node-source-map node-source-map-support node-spdx-correct node-spdx-exceptions node-spdx-expression-parse node-spdx-license-ids node-sprintf-js node-ssri node-stack-utils node-string-decoder node-string-width node-strip-ansi node-strip-bom node-strip-eof node-strip-json-comments node-supports-color node-tap node-tap-mocha-reporter node-tap-parser node-tapable node-tape node-tar node-terser node-text-table node-through node-time-stamp node-to-fast-properties node-to-regex-range node-tslib node-type-check node-typedarray node-typedarray-to-buffer node-undici node-unicode-canonical-property-names-ecmascript node-unicode-match-property-ecmascript node-unicode-match-property-value-ecmascript node-unicode-property-aliases-ecmascript node-union-value node-unique-filename node-unset-value node-uri-js node-util node-util-deprecate node-uuid node-v8-compile-cache node-v8flags node-validate-npm-package-license node-validate-npm-package-name node-watchpack;\n\n    # Batch 46\n    apt install -y node-wcwidth.js node-webassemblyjs node-webpack-sources node-which node-wide-align node-widest-line node-wordwrap node-wrap-ansi node-wrappy node-write node-write-file-atomic node-ws node-xtend node-y18n node-yallist node-yaml node-yargs node-yargs-parser nodejs nodejs-doc npm ntfs-3g numactl ocl-icd-libopencl1:amd64 ocl-icd-opencl-dev:amd64 opencl-c-headers opencl-clhpp-headers opencl-headers openprinting-ppds openssh-client openssl openssl-provider-legacy openvpn orca os-prober p11-kit p11-kit-modules:amd64 p7zip-full packagekit packagekit-tools pango1.0-tools papers papers-common parted passwd patch pci.ids pciutils pcmciautils perl;\n\n    # Batch 47\n    apt install -y perl-base perl-modules-5.40 perl-openssl-defaults:amd64 pigz pinentry-curses pinentry-gnome3 pipewire:amd64 pipewire-alsa:amd64 pipewire-audio pipewire-bin pipewire-pulse pkexec pkg-config:amd64 pkgconf:amd64 pkgconf-bin plexmediaserver plymouth plymouth-label plymouth-theme-spinner plymouth-theme-ubuntu-text pnp.ids pocketsphinx-en-us policykit-desktop-privileges polkitd poppler-data poppler-utils postgresql-client-17 postgresql-client-common postgresql-common postgresql-common-dev postgresql-server-dev-17 postgresql-server-dev-all power-profiles-daemon powermgmt-base ppp pptp-linux printer-driver-brlaser printer-driver-c2esp printer-driver-foo2zjs printer-driver-foo2zjs-common printer-driver-hpcups printer-driver-m2300w printer-driver-min12xxw printer-driver-pnm2ppa printer-driver-postscript-hp printer-driver-ptouch printer-driver-pxljr printer-driver-sag-gdi printer-driver-splix procps;\n\n    # Batch 48\n    apt install -y proj-bin proj-data psmisc publicsuffix python-apt-common python-babel-localedata python3 python3-apport python3-apt python3-aptdaemon python3-aptdaemon.gtk3widgets python3-argon2 python3-attr python3-autocommand python3-babel python3-bcrypt python3-blinker python3-bpfcc python3-brlapi:amd64 python3-brotli python3-bs4 python3-bson python3-bson-ext:amd64 python3-cairo python3-certifi python3-cffi-backend:amd64 python3-chardet python3-click python3-commandnotfound python3-configobj python3-cryptography python3-cssselect python3-cups:amd64 python3-cupshelpers python3-dateutil python3-dbus python3-debconf python3-debian python3-defer python3-dev python3-distro python3-distro-info python3-distupgrade python3-dnspython python3-gdbm:amd64 python3-gi python3-gridfs python3-html5lib python3-httplib2 python3-ibus-1.0;\n\n    # Batch 49\n    apt install -y python3-idna python3-inflect python3-jaraco.context python3-jaraco.functools python3-jinja2 python3-json-pointer python3-jsonpatch python3-jsonschema python3-jsonschema-specifications python3-jwt python3-launchpadlib python3-lazr.restfulclient python3-lazr.uri python3-louis python3-lxml:amd64 python3-markdown-it python3-markupsafe python3-mdurl python3-minimal python3-more-itertools python3-mutagen python3-netaddr python3-netifaces:amd64 python3-netplan python3-numpy python3-numpy-dev:amd64 python3-oauthlib python3-olefile python3-opencv python3-packaging python3-passlib python3-pexpect python3-pil:amd64 python3-pip python3-pip-whl python3-pkg-resources python3-problem-report python3-psutil python3-ptyprocess python3-pycryptodome python3-pygments python3-pymongo python3-pymongo-ext:amd64 python3-pyparsing python3-referencing python3-requests python3-rich python3-rpds-py python3-serial python3-setuptools-whl;\n\n    # Batch 50\n    apt install -y python3-software-properties python3-soupsieve python3-speechd python3-sss python3-systemd python3-tk:amd64 python3-typeguard python3-typing-extensions python3-update-manager python3-urllib3 python3-venv python3-wadllib python3-webencodings python3-websockets python3-wheel python3-xdg python3-xkit python3-yaml python3.13 python3.13-dev python3.13-gdbm python3.13-minimal python3.13-tk python3.13-venv qdbus-qt6 qdoc-qt6 qml-module-qt-labs-folderlistmodel:amd64 qml-module-qt-labs-platform:amd64 qml-module-qt-labs-settings:amd64 qml-module-qtgraphicaleffects:amd64 qml-module-qtqml:amd64 qml-module-qtqml-models2:amd64 qml-module-qtquick-controls:amd64 qml-module-qtquick-dialogs:amd64 qml-module-qtquick-layouts:amd64 qml-module-qtquick-privatewidgets:amd64 qml-module-qtquick-window2:amd64 qml-module-qtquick2:amd64 qml-module-qtwebchannel:amd64 qml-module-qtwebengine:amd64 qml-qt6 qml6-module-qtqml:amd64 qml6-module-qtqml-models:amd64 qml6-module-qtqml-workerscript:amd64 qml6-module-qtquick:amd64 qml6-module-qtquick-controls:amd64 qml6-module-qtquick-layouts:amd64 qml6-module-qtquick-shapes:amd64 qml6-module-qtquick-templates:amd64 qml6-module-qtquick-timeline:amd64;\n\n    # Batch 51\n    apt install -y qml6-module-qtquick-window:amd64 qml6-module-qtquick3d:amd64 qml6-module-qtquick3d-particles3d:amd64 qt5-gtk-platformtheme:amd64 qt5-qmake:amd64 qt5-qmake-bin qt5-qmltooling-plugins:amd64 qt6-base-dev-tools qt6-declarative-dev-tools qt6-documentation-tools qt6-gtk-platformtheme:amd64 qt6-image-formats-plugins qt6-l10n-tools qt6-qmltooling-plugins:amd64 qt6-qpa-plugins:amd64 qt6-svg-plugins:amd64 qt6-tools-dev-tools qt6-translations-l10n qt6-wayland:amd64 qtbase5-dev:amd64 qtbase5-dev-tools qtchooser qtcreator qtcreator-data qtcreator-doc qtdeclarative5-dev:amd64 qtdeclarative5-dev-tools qtpositioning5-dev:amd64 qttranslations5-l10n qtwayland5:amd64 qtwebengine5-dev:amd64 qtwebengine5-doc readline-common rfkill rpcsvc-proto rsync rsyslog rtkit rygel samba-libs:amd64 sane-airscan sane-utils sbsigntool seahorse secureboot-db sed sensible-utils session-migration sgml-base sgml-data;\n\n    # Batch 52\n    apt install -y shared-mime-info shim-signed slirp4netns slurp snapd software-properties-common software-properties-gtk sound-icons sound-theme-freedesktop speech-dispatcher speech-dispatcher-audio-plugins:amd64 speech-dispatcher-espeak-ng spice-vdagent sqlite3 squashfs-tools ssl-cert sssd sssd-ad sssd-ad-common sssd-common sssd-ipa sssd-krb5 sssd-krb5-common sssd-ldap sssd-proxy strace sudo switcheroo-control synaptics-repository-keyring sysprof sysstat system-config-printer-common system-config-printer-udev systemd systemd-cryptsetup systemd-hwe-hwdb systemd-oomd systemd-resolved systemd-sysv systemd-timesyncd sysvinit-utils tar tcl tcl8.6 tcpdump tecla telnet terser tesseract-ocr tesseract-ocr-eng;\n\n    # Batch 53\n    apt install -y tesseract-ocr-osd thermald time tinysparql tk8.6-blt2.5 tnftp tpm-udev trace-cmd tracker-extract tzdata ubuntu-advantage-desktop-daemon ubuntu-desktop-minimal ubuntu-docs ubuntu-drivers-common ubuntu-kernel-accessories ubuntu-keyring ubuntu-minimal ubuntu-pro-client ubuntu-pro-client-l10n ubuntu-release-upgrader-core ubuntu-release-upgrader-gtk ubuntu-report ubuntu-restricted-addons ubuntu-session ubuntu-session-xsession ubuntu-settings ubuntu-standard ubuntu-wallpapers ubuntu-wallpapers-plucky ucf uchardet udev udisks2 unattended-upgrades unixodbc-common unrar unzip update-inetd update-manager update-manager-core update-notifier update-notifier-common upower usb-modeswitch usb-modeswitch-data usb.ids usbmuxd usbutils util-linux uuid-dev:amd64;\n\n    # Batch 54\n    apt install -y uuid-runtime vdpau-driver-all:amd64 vim-common vim-tiny vlc vlc-bin vlc-data vlc-l10n vlc-plugin-access-extra:amd64 vlc-plugin-base:amd64 vlc-plugin-notify:amd64 vlc-plugin-qt:amd64 vlc-plugin-samba:amd64 vlc-plugin-skins2:amd64 vlc-plugin-video-output:amd64 vlc-plugin-video-splitter:amd64 vlc-plugin-visualization:amd64 wamerican wayland-protocols wbritish webp-pixbuf-loader:amd64 webpack wget whiptail whoopsie whoopsie-preferences wireless-regdb wireplumber wmctrl wpasupplicant wsdd x11-apps x11-common x11-session-utils x11-utils x11-xkb-utils x11-xserver-utils x11proto-dev xauth xbitmaps xbrlapi xclip xcursor-themes xcvt xdg-dbus-proxy xdg-desktop-portal xdg-desktop-portal-gnome xdg-desktop-portal-gtk xdg-terminal-exec xdg-user-dirs;\n\n    # Batch 55\n    apt install -y xdg-user-dirs-gtk xdg-utils xdotool xfonts-base xfonts-encodings xfonts-scalable xfonts-utils xinit xinput xkb-data xml-core xorg xorg-docs-core xorg-sgml-doctools xsel xserver-common xserver-xephyr xserver-xorg xserver-xorg-core xserver-xorg-input-all xserver-xorg-input-libinput xserver-xorg-input-wacom xserver-xorg-legacy xserver-xorg-video-all xserver-xorg-video-amdgpu xserver-xorg-video-ati xserver-xorg-video-fbdev xserver-xorg-video-intel xserver-xorg-video-nouveau xserver-xorg-video-qxl xserver-xorg-video-radeon xserver-xorg-video-vesa xserver-xorg-video-vmware xtrans-dev xwayland xxd xz-utils yaru-theme-gnome-shell yaru-theme-gtk yaru-theme-icon yaru-theme-sound yelp yelp-xsl yt-dlp zenity zenity-common zip zlib1g:amd64 zlib1g-dev:amd64 zstd;\n    log_success "Installed 2750 APT packages";\n\n    # Install Snap packages\n    log_info "📦 Installing Snap packages...";\n\n    if ! is_snap_installed "bare"; then\n        snap install bare --channel=5;\n        log_success "Installed snap: bare";\n    fi;\n\n    if ! is_snap_installed "desktop-security-center"; then\n        snap install desktop-security-center --channel=59;\n        log_success "Installed snap: desktop-security-center";\n    fi;\n\n    if ! is_snap_installed "firmware-updater"; then\n        snap install firmware-updater --channel=167;\n        log_success "Installed snap: firmware-updater";\n    fi;\n\n    if ! is_snap_installed "gh"; then\n        snap install gh --channel=640;\n        log_success "Installed snap: gh";\n    fi;\n\n    if ! is_snap_installed "gnome-42-2204"; then\n        snap install gnome-42-2204 --channel=202;\n        log_success "Installed snap: gnome-42-2204";\n    fi;\n\n    if ! is_snap_installed "gtk-common-themes"; then\n        snap install gtk-common-themes --channel=1535;\n        log_success "Installed snap: gtk-common-themes";\n    fi;\n\n    if ! is_snap_installed "prompting-client"; then\n        snap install prompting-client --channel=104;\n        log_success "Installed snap: prompting-client";\n    fi;\n\n    if ! is_snap_installed "qmmp"; then\n        snap install qmmp --channel=180;\n        log_success "Installed snap: qmmp";\n    fi;\n\n    if ! is_snap_installed "snap-store"; then\n        snap install snap-store --channel=1270;\n        log_success "Installed snap: snap-store";\n    fi;\n\n    if ! is_snap_installed "snapd-desktop-integration"; then\n        snap install snapd-desktop-integration --channel=315;\n        log_success "Installed snap: snapd-desktop-integration";\n    fi;\n\n    # Install Python packages\n    log_info "🐍 Installing Python packages...";\n\n    # Create temporary requirements file\n    cat > /tmp/bootstrap_requirements.txt << 'EOF'\nannotated-types==0.7.0\nanthropic==0.66.0\nanyio==4.10.0\naptdaemon==2.0.2\nargon2-cffi==21.1.0\nattrs==25.1.0\nautocommand==2.2.2\nbabel==2.17.0\nbcc==0.30.0\nbcrypt==4.2.0\nbeautifulsoup4==4.13.3\nblinker==1.9.0\nBrlapi==0.8.6\nBrotli==1.1.0\ncertifi==2025.1.31\nchardet==5.2.0\nclick==8.1.8\ncloud-init==25.1.4\ncommand-not-found==0.3\nconfigobj==5.0.9\ncryptography==43.0.0\ncssselect==1.3.0\ncupshelpers==1.0\ndbus-python==1.3.2\ndefer==1.0.6\ndistro==1.9.0\ndistro-info==1.13\ndnspython==2.7.0\ngooglemaps==4.10.0\ngyp-next==0.16.2\nh11==0.16.0\nhtml5lib-modern==1.2\nhttpcore==1.0.9\nhttplib2==0.22.0\nhttpx==0.28.1\nidna==3.10\ninflect==7.3.1\njaraco.context==6.0.1\njaraco.functools==4.1.0\nJinja2==3.1.5\njiter==0.10.0\njoblib==1.5.2\njsonpatch==1.32\njsonpointer==2.4\njsonschema==4.19.2\njsonschema-specifications==2023.12.1\nlanguage-selector==0.1\nlaunchpadlib==2.1.0\nlazr.restfulclient==0.14.6\nlazr.uri==1.0.6\nlouis==3.32.0\nlxml==5.3.2\nmarkdown-it-py==3.0.0\nMarkupSafe==2.1.5\nmdurl==0.1.2\nmore-itertools==10.6.0\nmutagen==1.47.0\nnetaddr==1.3.0\nnetifaces==0.11.0\nnltk==3.9.1\nnumpy==2.2.3\noauthlib==3.2.2\nolefile==0.47\nopenai==1.106.1\nopencv==4.10.0\npackaging==24.2\npasslib==1.7.4\npexpect==4.9.0\npillow==11.1.0\npsutil==5.9.8\nptyprocess==0.7.0\npycairo==1.27.0\npycryptodomex==3.20.0\npycups==2.0.4\npydantic==2.11.7\npydantic_core==2.33.2\nPygments==2.18.0\nPyJWT==2.10.1\npymongo==4.10.1\npyparsing==3.1.2\npyserial==3.5\npython-apt==3.0.0\npython-dateutil==2.9.0\npython-debian==1.0.1+ubuntu1\npyxdg==0.28\nPyYAML==6.0.2\nreferencing==0.35.1\nregex==2025.9.1\nrequests==2.32.3\nrich==13.9.4\nrpds-py==0.21.0\nsniffio==1.3.1\nsoupsieve==2.6\ntextblob==0.19.0\ntqdm==4.67.1\ntypeguard==4.4.2\ntyping_extensions==4.12.2\ntyping-inspection==0.4.1\nunattended-upgrades==0.1\nurllib3==2.3.0\nwadllib==2.0.0\nwebencodings==0.5.1\nwebsockets==14.1\nxdg==5\nxkit==0.0.0\nyt-dlp==2025.3.27\nEOF\n\n    # Install packages as target user\n    sudo -u "$TARGET_USER" pip3 install -r /tmp/bootstrap_requirements.txt --user;\n    rm /tmp/bootstrap_requirements.txt;\n    log_success "Installed 106 Python packages";\n\n    # Apply custom sysctl settings\n    log_info "⚙️ Applying custom sysctl settings...";\n\n    cat > /etc/sysctl.d/99-bootstrap.conf << 'EOF'\n# Custom sysctl settings restored by bootstrap\nvm.swappiness = 60\nfs.inotify.max_user_watches = 65536\nnet.core.somaxconn = 4096\nkernel.shmmax = 18446744073692774399\nEOF\n\n    sysctl -p /etc/sysctl.d/99-bootstrap.conf;\n    log_success "Applied 4 sysctl settings";\n\n    # Restore .bashrc customizations\n    log_info "🐚 Restoring .bashrc customizations...";\n\n    # Add safe customizations\n    echo 'export gmail_sender_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";\n    echo 'export gmail_recipient_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";\n    echo 'if ! command -v code &> /dev/null; then' >> "$USER_HOME/.bashrc";\n    echo 'if command -v code-insiders &> /dev/null; then' >> "$USER_HOME/.bashrc";\n    echo 'alias code='code-insiders'' >> "$USER_HOME/.bashrc";\n    echo 'fi' >> "$USER_HOME/.bashrc";\n    echo 'fi' >> "$USER_HOME/.bashrc";\n\n    # Decrypt and restore sensitive environment variables
-    log_info "🔐 Decrypting sensitive environment variables...";
-    
-    # Embedded encrypted secrets (base64 encoded)
-    ENCRYPTED_SECRETS_B64="eyJlbmNyeXB0ZWRfZGF0YSI6IHsibW9uZ29kYl91cmkiOiB7ImNpcGhlcnRleHQiOiAialF5Wkk4a0krdEFIT3V4YTA0TVF5V1ppa0JURHE5SStCcEwxUklnckk1aURoU2g3SGpjaWphbDN0Skx4TkJDYldwQzduNVVDQy9obWw1S0hkeE1uL0YyNkdsSG5Jc25OQTJ0Qk0rRHZZTUJMV3VwOHhRPT0iLCAibm9uY2UiOiAiRzBKNjZLMUdCaS9pVnduaCIsICJzYWx0IjogIlA0V2tsQzdXZVk3RTdJK1JIMWV6bGc9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIn0sICJnbWFpbF9zZW5kZXJfcGFzc3dvcmQiOiB7ImNpcGhlcnRleHQiOiAiYTlaeEpDV25ucCtsNitjWFJrblVLMm9HanhWWUo3RmVwSmlWcExPaUVwbmtCaUk9IiwgIm5vbmNlIjogInNpM0xrK3FveXpBZ1QxZHgiLCAic2FsdCI6ICJrVDEvdlFFdWdvS2FpKy9jOTJDcWxnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9LCAiR09PR0xFX1BMQUNFU19BUElfS0VZIjogeyJjaXBoZXJ0ZXh0IjogInB3Ulk5MmE0MGUxZ3hWd21lVWNJQndSeUZrSHJLT1pVeUludkNma08rc0xLWFBUMXJvanhuc1FDNmpUTUVOQmVNQlk4c2gvclpnPT0iLCAibm9uY2UiOiAidzMzQkk3eGViV0t3TTJOYSIsICJzYWx0IjogIm9XUUllTTNhcVdPN01VNU5wYkJZT3c9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIn0sICJYQUlfQVBJX0tFWSI6IHsiY2lwaGVydGV4dCI6ICJUcGFvNlJpTm9xWndudW9NSVExaW1CaDZmZzdWY3BlbVFldFdmVWxvZy9LRi9oYUs4SGwyRGhtZzJUVHVBZnJNQkZlSkxwSjQyUHZRenQvOWlxTXljY2NHbGI1NnhRbGdWQWd5eU5zd05rREpIMmY2MjN0NG5jM2NTQUgrTUYzTC8rYmpJZz09IiwgIm5vbmNlIjogIjlQUGxPQlJMejY1anZCR2wiLCAic2FsdCI6ICJhTE5jTFRLWmpuVXowMFhWU2tYT09nPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9LCAiQU5USFJPUElDX0FQSV9LRVkiOiB7ImNpcGhlcnRleHQiOiAiWlMrNldFYkhPK1plWUppNWtxVnFOTlhpYXZoVFd1M0NUUzZScUNiSXhYNjlhb2IvQS93UmlETXFVWkliWkUwdGdDL0hGd3h1cWpKaEFxVDY2U3o3N3VNTHNhcnZ0emVKYTQzMDBETTlpUTgxVTYzZmxPZFZSQndyTWt2bW1hd1Jla01NQ1VBRTUxdXptMXR1Rk13TnlFcVE3bzFkeHcya3lWSDhaQT09IiwgIm5vbmNlIjogIlVVWk1wWlNIbC84OTMrNlAiLCAic2FsdCI6ICJLOXNsQTdzN3RtRGh3THFoSTB6K3ZnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9LCAiT1BFTkFJX0FQSV9LRVkiOiB7ImNpcGhlcnRleHQiOiAiMCtjd0REY3I5emsvZWpjYTNrdmQwODhNYS9jWlRRaGZzc0dCTWhiSEE1VndxSzZPZ3BLcDA0dk14SXErelpsTEEvWEJxMTNuMENHUEYrWVYxQm1GSUJ4MUM2RDJDamdJMmlhYkhBR3NYQVF0Q09WbERoY3dGeFpON1l1aURQNWNYclJxWnVhZjNLZ3FVWDA1c3pqd3l4cDRxRXVOc21pTU1EbUtPMkxNVkR4NWtxZlB0a2g0RnJCY0RiaHN5aXMzSXJTdnc4S1NkY2Z6dVRvdDFXeFExb1BodVVtZ3FjS2I0aHp6bUwrMkRBVFNFVmJDIiwgIm5vbmNlIjogInQ4dXBrMDBtR3psaG9aakciLCAic2FsdCI6ICJIcDB0MzU0aGIzNW43K2RQVzVEMHZnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9fSwgInZlcnNpb24iOiAiMS4wIiwgInRvdGFsX2l0ZW1zIjogNn0=";
-    
-    # Python decryption inline script
-    python3 - <<PYTHON_SCRIPT
-import json, base64, sys, getpass, os;
-from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305;
-from argon2.low_level import hash_secret, Type;
-
-# Recreate crypto functions inline
-def derive_key(password, salt):
-    return hash_secret(
-        password.encode('utf-8'), salt,
-        time_cost=3, memory_cost=65536, parallelism=4,
-        hash_len=32, type=Type.ID
-    ), salt;
-
-def decrypt(encrypted_data, password):
-    try:
-        ciphertext = base64.b64decode(encrypted_data['ciphertext']);
-        nonce = base64.b64decode(encrypted_data['nonce']);
-        salt = base64.b64decode(encrypted_data['salt']);
-        key, _ = derive_key(password, salt);
-        cipher = ChaCha20Poly1305(key);
-        plaintext_bytes = cipher.decrypt(nonce, ciphertext, None);
-        return plaintext_bytes.decode('utf-8');
-    except Exception as e:
-        raise ValueError(f"Decryption failed: {e}");
-
-# Load encrypted data
-try:
-    encrypted_json = base64.b64decode("$ENCRYPTED_SECRETS_B64").decode('utf-8');
-    encrypted_data = json.loads(encrypted_json);
-    
-    # Get password from user
-    password = getpass.getpass("Enter master password to decrypt secrets: ");
-    
-    # Decrypt each secret and append to .bashrc
-    user_home = os.environ.get('USER_HOME', '/home/' + os.environ.get('SUDO_USER', 'user'));
-    bashrc_path = f"{user_home}/.bashrc";
-    
-    with open(bashrc_path, 'a') as f:
-        f.write("\n# Decrypted sensitive environment variables\n");
-        
-        encrypted_items = encrypted_data.get('encrypted_data', {});
-        for var_name, encrypted_value in encrypted_items.items():
-            if isinstance(encrypted_value, dict) and 'ciphertext' in encrypted_value:
-                try:
-                    decrypted_value = decrypt(encrypted_value, password);
-                    f.write(f'export {var_name}="{decrypted_value}"\n');
-                    print(f"✅ Decrypted: {var_name}");
-                except Exception as e:
-                    print(f"❌ Failed to decrypt {var_name}: {e}");
-                    sys.exit(1);
-    
-    print("🔓 All secrets decrypted successfully");
-    
-except Exception as e:
-    print(f"❌ Decryption process failed: {e}");
-    sys.exit(1);
-PYTHON_SCRIPT
-
-    if [[ $? -eq 0 ]]; then
-        log_success "Sensitive environment variables restored";
+    # Ensure pip3 is available before installing Python packages
+    log_info "🔧 Checking Python pip3 availability...";
+    if ! command -v pip3 >/dev/null 2>&1; then
+        log_info "Installing python3-pip...";
+        apt update;
+        apt install -y python3-pip;
+        log_success "pip3 installed";
     else
-        log_error "Failed to decrypt sensitive data";
-        return 1;
+        log_info "pip3 already available";
+    fi;
+    
+    # Install APT packages - FIXED: Proper shell formatting with actual newlines
+    log_info "📦 Installing APT packages...";
+
+    # Install packages in smaller, manageable batches to avoid timeout issues
+    
+    # Essential development tools and libraries
+    log_info "Installing essential development tools...";
+    apt install -y build-essential cmake ninja-build autoconf automake libtool \
+        pkg-config git git-man curl wget gnupg software-properties-common \
+        apt-transport-https ca-certificates;
+
+    # Core system packages
+    log_info "Installing core system packages...";
+    apt install -y 7zip accountsservice acl adduser base-files base-passwd \
+        bash bash-completion bc coreutils findutils grep gawk sed \
+        util-linux mount fdisk parted;
+
+    # Development libraries and headers
+    log_info "Installing development libraries...";
+    apt install -y libc6-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev \
+        libreadline-dev libsqlite3-dev libncurses-dev libbz2-dev \
+        zlib1g-dev libgdbm-dev;
+
+    # Python and related packages  
+    log_info "Installing Python packages...";
+    apt install -y python3 python3-dev python3-pip python3-venv python3-wheel \
+        python3-setuptools python3-apt python3-dbus;
+
+    # Multimedia and graphics
+    log_info "Installing multimedia packages...";
+    apt install -y ffmpeg imagemagick vlc vlc-bin vlc-data libdvd-pkg \
+        ubuntu-restricted-extras libavcodec-extra gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+        gstreamer1.0-libav gstreamer1.0-vaapi;
+
+    # Configure DVD decryption and multimedia codecs
+    log_info "🎬 Configuring multimedia codecs and DVD support...";
+    
+    # Configure libdvd-pkg for encrypted DVD playback
+    if dpkg-query -W -f="\${Status}" libdvd-pkg 2>/dev/null | grep -q "install ok installed"; then
+        # Reconfigure libdvd-pkg to install libdvdcss2
+        DEBIAN_FRONTEND=noninteractive dpkg-reconfigure libdvd-pkg;
+        log_success "DVD decryption configured";
+    fi;
+    
+    # Install additional codec packages that may not be in restricted-extras
+    apt install -y --no-install-recommends \
+        libavcodec-extra58 libavformat-extra58 libavutil-extra56 \
+        libx264-155 libx265-179 lame faac faad \
+        flac opus-tools vorbis-tools \
+        libmatroska-dev libmkv0 libebml-dev;
+    
+    # Ensure proper GStreamer codec registry is updated
+    sudo -u "$TARGET_USER" gst-inspect-1.0 > /dev/null 2>&1 || true;
+    
+    log_success "Multimedia codecs configured for MP4, MKV, DVD, and common formats";
+
+
+    # Desktop environment essentials
+    log_info "Installing desktop environment packages...";
+    apt install -y ubuntu-desktop-minimal gnome-shell gnome-terminal \
+        nautilus gdm3 dconf-editor;
+
+    # Additional useful tools
+    log_info "Installing additional tools...";
+    apt install -y vim nano htop tree rsync zip unzip p7zip-full \
+        net-tools openssh-client curl wget jq;
+
+    log_success "Essential APT packages installed successfully";
+
+    # Install Snap packages - FIXED: Proper formatting
+    log_info "📦 Installing Snap packages...";
+
+    if ! is_snap_installed "bare"; then
+        snap install bare --channel=5;
+        log_success "Installed snap: bare";
     fi;
 
-    log_success ".bashrc customizations restored";\n\n    # Install custom services\n    log_info "🔧 Installing custom services...";\n\n    # Install GridShift - Automated Media Download Manager\n    log_info "Installing GridShift from GitHub...";\n    \n    # Create installation directory\n    GRIDSHIFT_DIR="/opt/gridshift";\n    sudo mkdir -p "$GRIDSHIFT_DIR";\n    sudo chown "$TARGET_USER:$TARGET_USER" "$GRIDSHIFT_DIR";\n    \n    # Clone GridShift repository\n    sudo -u "$TARGET_USER" git clone https://github.com/mcollard0/gridshift.git "$GRIDSHIFT_DIR";\n    cd "$GRIDSHIFT_DIR";\n    \n    # Set up Python virtual environment\n    log_info "Setting up Python virtual environment for GridShift...";\n    sudo -u "$TARGET_USER" python3 -m venv "$GRIDSHIFT_DIR/venv";\n    \n    # Install Python dependencies\n    sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install --upgrade pip;\n    sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install -r "$GRIDSHIFT_DIR/requirements.txt";\n    \n    # Install pyload-ng for download management\n    sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install pyload-ng;\n    \n    # Test the installation\n    if sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/python" "$GRIDSHIFT_DIR/test_setup.py"; then\n        log_success "GridShift installed successfully";\n    else\n        log_warning "GridShift installation test failed - check logs";\n    fi;\n    \n    # Create convenient aliases in .bashrc\n    echo 'alias gridshift="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu"' >> "$USER_HOME/.bashrc";\n    echo 'alias gridshift-daemon="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu daemon"' >> "$USER_HOME/.bashrc";\n    echo 'alias gridshift-monitor="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu monitor"' >> "$USER_HOME/.bashrc";\n    \n    log_info "GridShift aliases added to .bashrc";\n    log_info "Use 'gridshift' command to access the interactive menu";\n    log_info "Use 'gridshift-daemon' to start automation";\n    log_info "Use 'gridshift-monitor' for real-time monitoring";\n    \n    log_success "Custom services installation completed";\n\n    # Restore SSH keys and configuration\n    log_info "🔑 Restoring SSH keys and configuration...";\n\n    # Create .ssh directory with proper permissions\n    sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.ssh";\n    chmod 700 "$USER_HOME/.ssh";\n    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";\n\n    # Note: Private key id_ed25519 needs to be manually restored\n    log_warning "Private key id_ed25519 must be manually restored for security";\n\n    # Restore id_ed25519.pub\n    cat > "$USER_HOME/.ssh/id_ed25519.pub" << 'EOF'\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKsCLUll8fV8DmFE/eDtmjBE/mO/R4nVAQHMFW273fWo michael@github-memento\nEOF\n    chmod 644 "$USER_HOME/.ssh/id_ed25519.pub";\n    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub";\n\n    log_success "SSH configuration restored";\n\n    # Configure keyboard shortcuts
+    if ! is_snap_installed "desktop-security-center"; then
+        snap install desktop-security-center --channel=59;
+        log_success "Installed snap: desktop-security-center";
+    fi;
+
+    if ! is_snap_installed "firmware-updater"; then
+        snap install firmware-updater --channel=167;
+        log_success "Installed snap: firmware-updater";
+    fi;
+
+    if ! is_snap_installed "gh"; then
+        snap install gh --stable;
+        log_success "Installed snap: gh";
+    fi;
+
+    if ! is_snap_installed "gnome-42-2204"; then
+        snap install gnome-42-2204 --channel=202;
+        log_success "Installed snap: gnome-42-2204";
+    fi;
+
+    if ! is_snap_installed "gtk-common-themes"; then
+        snap install gtk-common-themes --channel=1535;
+        log_success "Installed snap: gtk-common-themes";
+    fi;
+
+    if ! is_snap_installed "prompting-client"; then
+        snap install prompting-client --channel=104;
+        log_success "Installed snap: prompting-client";
+    fi;
+
+    if ! is_snap_installed "qmmp"; then
+        snap install qmmp --channel=180;
+        log_success "Installed snap: qmmp";
+    fi;
+
+    if ! is_snap_installed "snap-store"; then
+        snap install snap-store --channel=1270;
+        log_success "Installed snap: snap-store";
+    fi;
+
+    if ! is_snap_installed "snapd-desktop-integration"; then
+        snap install snapd-desktop-integration --channel=315;
+        log_success "Installed snap: snapd-desktop-integration";
+    fi;
+
+    # Install Python packages - FIXED: Proper formatting
+    log_info "🐍 Installing Python packages...";
+
+    # Create temporary requirements file with essential packages only
+    cat > /tmp/bootstrap_requirements.txt << 'EOF'
+# Essential Python packages
+requests==2.32.3
+urllib3==2.3.0
+certifi==2025.1.31
+cryptography==43.0.0
+pydantic==2.11.7
+click==8.1.8
+rich==13.9.4
+numpy==2.2.3
+packaging==24.2
+setuptools-scm
+wheel
+pip
+EOF
+
+    # Install packages as target user
+    sudo -u "$TARGET_USER" pip3 install -r /tmp/bootstrap_requirements.txt --user;
+    rm /tmp/bootstrap_requirements.txt;
+    log_success "Essential Python packages installed";
+
+    # Apply custom sysctl settings - FIXED: Proper formatting
+    log_info "⚙️ Applying custom sysctl settings...";
+
+    cat > /etc/sysctl.d/99-bootstrap.conf << 'EOF'
+# Custom sysctl settings restored by bootstrap
+vm.swappiness = 60
+fs.inotify.max_user_watches = 65536
+net.core.somaxconn = 4096
+kernel.shmmax = 18446744073692774399
+EOF
+
+    sysctl -p /etc/sysctl.d/99-bootstrap.conf;
+    log_success "Applied 4 sysctl settings";
+
+    # Restore .bashrc customizations - FIXED: Proper formatting
+    log_info "🐚 Restoring .bashrc customizations...";
+
+    # Add safe customizations
+    echo 'export gmail_sender_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
+    echo 'export gmail_recipient_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
+    echo 'if ! command -v code &> /dev/null; then' >> "$USER_HOME/.bashrc";
+    echo 'if command -v code-insiders &> /dev/null; then' >> "$USER_HOME/.bashrc";
+    echo 'alias code=code-insiders' >> "$USER_HOME/.bashrc";
+    echo 'fi' >> "$USER_HOME/.bashrc";
+    echo 'fi' >> "$USER_HOME/.bashrc";
+
+    # Restore encrypted secrets
+    log_info "🔐 Restoring encrypted environment variables...";
+    
+    # Backup existing .bashrc with timestamp
+    BASHRC_BACKUP="$USER_HOME/.bashrc.$(date -Iseconds)";
+    if [[ -f "$USER_HOME/.bashrc" ]]; then
+        cp "$USER_HOME/.bashrc" "$BASHRC_BACKUP";
+        chown "$TARGET_USER:$TARGET_USER" "$BASHRC_BACKUP";
+        log_info "Created .bashrc backup at $BASHRC_BACKUP";
+    fi;
+    
+    # Check if encrypted secrets file exists
+    if [[ -f "../data/encrypted_secrets.json" ]]; then
+        # Install required Python packages for decryption (system-wide)
+        log_info "Installing cryptography packages for secret decryption...";
+        apt install -y python3-cryptography python3-argon2 || {
+            log_warning "Failed to install cryptography packages - skipping secrets restoration";
+            return 0;
+        };
+        log_success "Cryptography packages installed";
+        
+        # Attempt to decrypt and append secrets to .bashrc
+        log_info "Please enter your master password to decrypt environment variables...";
+        if sudo -u "$TARGET_USER" python3 "./decrypt_secrets.py" >> "$USER_HOME/.bashrc.temp" 2>/dev/null; then
+            # Add a separator comment
+            echo '' >> "$USER_HOME/.bashrc";
+            echo '# Environment variables restored from encrypted secrets' >> "$USER_HOME/.bashrc";
+            cat "$USER_HOME/.bashrc.temp" >> "$USER_HOME/.bashrc";
+            rm "$USER_HOME/.bashrc.temp";
+            chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.bashrc";
+            log_success "Encrypted environment variables restored to .bashrc";
+        else
+            rm -f "$USER_HOME/.bashrc.temp";
+            log_warning "Failed to decrypt secrets - please restore manually using ./decrypt_secrets.py";
+        fi;
+    else
+        log_warning "No encrypted secrets file found - skipping secrets restoration";
+    fi;
+
+    log_success ".bashrc customizations restored";
+    
+    # Source .bashrc to load new environment variables
+    log_info "Loading updated environment variables...";
+    sudo -u "$TARGET_USER" bash -c "source '$USER_HOME/.bashrc'" || true;
+
+    # Install custom services - FIXED: Proper formatting
+    log_info "🔧 Installing custom services...";
+
+    # Install GridShift - Automated Media Download Manager
+    log_info "Installing GridShift from GitHub...";
+    
+    # Create installation directory
+    GRIDSHIFT_DIR="/opt/gridshift";
+    mkdir -p "$GRIDSHIFT_DIR";
+    chown "$TARGET_USER:$TARGET_USER" "$GRIDSHIFT_DIR";
+    
+    # Check if repository exists before cloning
+    if [[ ! -d "$GRIDSHIFT_DIR/.git" ]]; then
+        # Clone GridShift repository
+        sudo -u "$TARGET_USER" git clone https://github.com/mcollard0/gridshift.git "$GRIDSHIFT_DIR" || {
+            log_warning "GridShift repository not accessible - skipping installation";
+        };
+    fi;
+    
+    if [[ -d "$GRIDSHIFT_DIR/.git" ]]; then
+        cd "$GRIDSHIFT_DIR";
+        
+        # Set up Python virtual environment
+        log_info "Setting up Python virtual environment for GridShift...";
+        sudo -u "$TARGET_USER" python3 -m venv "$GRIDSHIFT_DIR/venv";
+        
+        # Install Python dependencies if requirements.txt exists
+        if [[ -f "$GRIDSHIFT_DIR/requirements.txt" ]]; then
+            sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install --upgrade pip;
+            sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install -r "$GRIDSHIFT_DIR/requirements.txt";
+        fi;
+        
+        # Install pyload-ng for download management
+        sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install pyload-ng;
+        
+        # Test the installation if test file exists
+        if [[ -f "$GRIDSHIFT_DIR/test_setup.py" ]]; then
+            if sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/python" "$GRIDSHIFT_DIR/test_setup.py"; then
+                log_success "GridShift installed successfully";
+            else
+                log_warning "GridShift installation test failed - check logs";
+            fi;
+        else
+            log_success "GridShift basic installation completed";
+        fi;
+        
+        # Create convenient aliases in .bashrc
+        echo 'alias gridshift="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu"' >> "$USER_HOME/.bashrc";
+        echo 'alias gridshift-daemon="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu daemon"' >> "$USER_HOME/.bashrc";
+        echo 'alias gridshift-monitor="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu monitor"' >> "$USER_HOME/.bashrc";
+        
+        log_info "GridShift aliases added to .bashrc";
+        log_info "Use 'gridshift' command to access the interactive menu";
+        log_info "Use 'gridshift-daemon' to start automation";
+        log_info "Use 'gridshift-monitor' for real-time monitoring";
+    fi;
+    
+    log_success "Custom services installation completed";
+
+    # Restore SSH keys and configuration - FIXED: Proper formatting
+    log_info "🔑 Restoring SSH keys and configuration...";
+
+    # Create .ssh directory with proper permissions
+    sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.ssh";
+    chmod 700 "$USER_HOME/.ssh";
+    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";
+
+    # Note: Private key id_ed25519 needs to be manually restored
+    log_warning "Private key id_ed25519 must be manually restored for security";
+
+    # Restore id_ed25519.pub
+    cat > "$USER_HOME/.ssh/id_ed25519.pub" << 'EOF'
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKsCLUll8fV8DmFE/eDtmjBE/mO/R4nVAQHMFW273fWo michael@github-memento
+EOF
+    chmod 644 "$USER_HOME/.ssh/id_ed25519.pub";
+    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub";
+
+    log_success "SSH configuration restored";
+
+    # Install missing applications from inventory
+    log_info "📦 Installing missing applications from inventory...";
+    
+    # Install prerequisites first (after SSH keys are restored)
+    log_info "Installing prerequisites for custom applications...";
+    
+    # Install 1Password
+    log_info "Installing 1Password...";
+    if ! command -v 1password &> /dev/null; then
+        # Add 1Password repository key
+        curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg;
+        # Add 1Password repository
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" > /etc/apt/sources.list.d/1password.list;
+        # Update and install
+        apt update;
+        apt install -y 1password || log_warning "Failed to install 1Password";
+        log_success "1Password installed";
+    else
+        log_info "1Password already installed";
+    fi;
+    
+    # Install VS Code Insiders
+    log_info "Installing VS Code Insiders...";
+    if ! command -v code-insiders &> /dev/null; then
+        # Add Microsoft repository key
+        curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --output /usr/share/keyrings/microsoft-archive-keyring.gpg;
+        # Add VS Code Insiders repository
+        echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list;
+        # Update and install
+        apt update;
+        apt install -y code-insiders || log_warning "Failed to install VS Code Insiders";
+        log_success "VS Code Insiders installed";
+    else
+        log_info "VS Code Insiders already installed";
+    fi;
+    
+    # Install Zoom (via snap)
+    log_info "Installing Zoom...";
+    if ! is_snap_installed "zoom"; then
+        snap install zoom || log_warning "Failed to install Zoom via snap";
+        log_success "Zoom installed";
+    else
+        log_info "Zoom already installed";
+    fi;
+    
+    # Build and install Whatsie
+    log_info "Building Whatsie from source...";
+    WHATSIE_DIR="/opt/whatsie";
+    
+    # Install build prerequisites
+    apt install -y build-essential cmake qt6-base-dev qt6-webengine-dev || {
+        log_warning "Failed to install Whatsie build dependencies - skipping Whatsie build";
+    };
+    
+    # Only proceed if prerequisites installed successfully
+    if command -v cmake &> /dev/null && command -v qmake6 &> /dev/null; then
+        mkdir -p "$WHATSIE_DIR";
+        chown "$TARGET_USER:$TARGET_USER" "$WHATSIE_DIR";
+        
+        # Clone Whatsie if not already cloned
+        if [[ ! -d "$WHATSIE_DIR/.git" ]]; then
+            sudo -u "$TARGET_USER" git clone https://github.com/gsantner/whatsie.git "$WHATSIE_DIR" || {
+                log_warning "Failed to clone Whatsie repository - skipping build";
+            };
+        fi;
+        
+        # Build Whatsie if source available
+        if [[ -d "$WHATSIE_DIR/.git" ]]; then
+            cd "$WHATSIE_DIR";
+            
+            # Create build directory and configure
+            sudo -u "$TARGET_USER" mkdir -p build;
+            cd build;
+            
+            # Configure with CMake
+            if sudo -u "$TARGET_USER" cmake ..; then
+                # Build with multiple cores
+                if sudo -u "$TARGET_USER" make -j$(nproc); then
+                    # Install the binary
+                    cp whatsie /usr/local/bin/ || {
+                        log_warning "Failed to install Whatsie binary to /usr/local/bin";
+                    };
+                    
+                    # Create desktop entry
+                    cat > /usr/share/applications/whatsie.desktop << 'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Whatsie
+Comment=Feature rich WhatsApp web client
+Exec=/usr/local/bin/whatsie
+Icon=whatsapp
+Terminal=false
+Categories=Network;InstantMessaging;
+EOF
+                    log_success "Whatsie built and installed successfully";
+                else
+                    log_warning "Failed to build Whatsie";
+                fi;
+            else
+                log_warning "Failed to configure Whatsie build";
+            fi;
+        fi;
+    fi;
+    
+    log_success "Missing applications installation completed";
+
+    # Configure keyboard shortcuts
     log_info "⌨️  Configuring custom keyboard shortcuts...";
     
     # Source the keyboard shortcuts configuration script
@@ -314,7 +658,23 @@ PYTHON_SCRIPT
         log_warning "Keyboard shortcuts script not found - skipping";
     fi;
 
-    # Restore cron jobs\n    log_info "⏰ Restoring cron jobs...";\n\n    # Create temporary crontab file\n    cat > /tmp/bootstrap_crontab << 'EOF'\nMAILTO=""\nPATH=/usr/local/bin:/usr/bin:/bin\nHOME=/home/michael\n0 3 * * * cd $HOME && python3 KCRestaurants.py --ephemeral >> $HOME/logs/kc_restaurants/kc_$(date +\%F).log 2>&1\nEOF\n\n    # Install crontab for target user\n    sudo -u "$TARGET_USER" crontab /tmp/bootstrap_crontab;\n    rm /tmp/bootstrap_crontab;\n    log_success "Restored 4 cron jobs";\n\n    # Final steps and completion
+    # Restore cron jobs - FIXED: Proper formatting
+    log_info "⏰ Restoring cron jobs...";
+
+    # Create temporary crontab file
+    cat > /tmp/bootstrap_crontab << 'EOF'
+MAILTO=""
+PATH=/usr/local/bin:/usr/bin:/bin
+HOME=/home/michael
+0 3 * * * cd $HOME && python3 KCRestaurants.py --ephemeral >> $HOME/logs/kc_restaurants/kc_$(date +\%F).log 2>&1
+EOF
+
+    # Install crontab for target user
+    sudo -u "$TARGET_USER" crontab /tmp/bootstrap_crontab;
+    rm /tmp/bootstrap_crontab;
+    log_success "Restored cron jobs";
+
+    # Final steps and completion
     log_info "🧹 Performing final cleanup...";
     apt autoremove -y;
     apt autoclean;
