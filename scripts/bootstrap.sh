@@ -293,10 +293,16 @@ EOF
         flac opus-tools vorbis-tools \
         libmatroska-dev libmkv0 libebml-dev;
     
+    # Install Microsoft Core Fonts (Method 3: Combined approach)
+    log_info "Installing Microsoft Core Fonts with EULA auto-acceptance...";
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections;
+    DEBIAN_FRONTEND=noninteractive apt install -y ttf-mscorefonts-installer;
+    log_success "Microsoft Core Fonts installed (EULA accepted)";
+    
     # Ensure proper GStreamer codec registry is updated
     sudo -u "$TARGET_USER" gst-inspect-1.0 > /dev/null 2>&1 || true;
     
-    log_success "Multimedia codecs configured for MP4, MKV, DVD, and common formats";
+    log_success "Multimedia codecs and fonts configured for MP4, MKV, DVD, and common formats";
 
 
     # Desktop environment essentials
@@ -683,6 +689,64 @@ EOF
                 log_warning "Failed to configure Whatsie build";
             fi;
         fi;
+    fi;
+    
+    # Build and install NoiseTorch (real-time microphone noise suppression)
+    log_info "Building NoiseTorch from source...";
+    NOISETORCH_DIR="/opt/noisetorch";
+    
+    # Install Go if not already available
+    if ! command -v go &> /dev/null; then
+        apt install -y golang-go;
+        log_success "Go compiler installed for NoiseTorch build";
+    fi;
+    
+    # Only proceed if Go is available
+    if command -v go &> /dev/null; then
+        mkdir -p "$NOISETORCH_DIR";
+        chown "$TARGET_USER:$TARGET_USER" "$NOISETORCH_DIR";
+        
+        # Clone NoiseTorch if not already cloned
+        if [[ ! -d "$NOISETORCH_DIR/.git" ]]; then
+            sudo -u "$TARGET_USER" git clone https://github.com/noisetorch/NoiseTorch.git "$NOISETORCH_DIR" || {
+                log_warning "Failed to clone NoiseTorch repository - skipping build";
+            };
+        fi;
+        
+        # Build NoiseTorch if source available
+        if [[ -d "$NOISETORCH_DIR/.git" ]]; then
+            cd "$NOISETORCH_DIR";
+            
+            # Build with make
+            if sudo -u "$TARGET_USER" make; then
+                # Install to user's local bin (as recommended by NoiseTorch)
+                sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local/bin";
+                sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local/share/applications";
+                sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local/share/icons/hicolor/256x256/apps";
+                
+                # Copy binary and assets
+                sudo -u "$TARGET_USER" cp "./bin/noisetorch" "$USER_HOME/.local/bin/" || {
+                    log_warning "Failed to copy NoiseTorch binary";
+                };
+                
+                sudo -u "$TARGET_USER" cp "./assets/noisetorch.desktop" "$USER_HOME/.local/share/applications/" || {
+                    log_warning "Failed to copy NoiseTorch desktop file";
+                };
+                
+                sudo -u "$TARGET_USER" cp "./assets/icon/noisetorch.png" "$USER_HOME/.local/share/icons/hicolor/256x256/apps/" || {
+                    log_warning "Failed to copy NoiseTorch icon";
+                };
+                
+                # Update desktop database
+                sudo -u "$TARGET_USER" update-desktop-database "$USER_HOME/.local/share/applications" 2>/dev/null || true;
+                
+                log_success "NoiseTorch built and installed successfully (real-time noise suppression)";
+            else
+                log_warning "Failed to build NoiseTorch";
+            fi;
+        fi;
+    else
+        log_warning "Go compiler not available - skipping NoiseTorch build";
     fi;
     
     log_success "Missing applications installation completed";
