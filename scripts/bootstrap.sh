@@ -527,17 +527,84 @@ EOF
     chmod 700 "$USER_HOME/.ssh";
     chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";
 
-    # Note: Private key id_ed25519 needs to be manually restored
-    log_warning "Private key id_ed25519 must be manually restored for security";
+    # Restore SSH private keys from encrypted secrets if available
+    if [[ -n "${ssh_id_ed25519:-}" ]]; then
+        echo "$ssh_id_ed25519" > "$USER_HOME/.ssh/id_ed25519";
+        chmod 600 "$USER_HOME/.ssh/id_ed25519";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519";
+        log_success "Restored SSH key: id_ed25519";
+    fi;
+    
+    if [[ -n "${ssh_id_ed25519_github:-}" ]]; then
+        echo "$ssh_id_ed25519_github" > "$USER_HOME/.ssh/id_ed25519_github";
+        chmod 600 "$USER_HOME/.ssh/id_ed25519_github";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_github";
+        log_success "Restored SSH key: id_ed25519_github";
+    fi;
+    
+    if [[ -n "${ssh_id_ed25519_mcollard:-}" ]]; then
+        echo "$ssh_id_ed25519_mcollard" > "$USER_HOME/.ssh/id_ed25519_mcollard";
+        chmod 600 "$USER_HOME/.ssh/id_ed25519_mcollard";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_mcollard";
+        log_success "Restored SSH key: id_ed25519_mcollard";
+    fi;
 
-    # Restore id_ed25519.pub
+    # Restore public keys (these are safe to include in the script)
     cat > "$USER_HOME/.ssh/id_ed25519.pub" << 'EOF'
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKsCLUll8fV8DmFE/eDtmjBE/mO/R4nVAQHMFW273fWo michael@github-memento
 EOF
     chmod 644 "$USER_HOME/.ssh/id_ed25519.pub";
     chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub";
+    
+    # Add other public keys if they exist in the old system
+    if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_github.pub" ]]; then
+        cp "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_github.pub" "$USER_HOME/.ssh/";
+        chmod 644 "$USER_HOME/.ssh/id_ed25519_github.pub";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_github.pub";
+    fi;
+    
+    if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_mcollard.pub" ]]; then
+        cp "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_mcollard.pub" "$USER_HOME/.ssh/";
+        chmod 644 "$USER_HOME/.ssh/id_ed25519_mcollard.pub";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_mcollard.pub";
+    fi;
+    
+    # Warn if no SSH keys were restored
+    if [[ -z "${ssh_id_ed25519:-}" && -z "${ssh_id_ed25519_github:-}" && -z "${ssh_id_ed25519_mcollard:-}" ]]; then
+        log_warning "No SSH private keys found in decrypted secrets - please restore manually if needed";
+    fi;
 
     log_success "SSH configuration restored";
+
+    # Restore git configuration
+    log_info "🔧 Configuring git user identity...";
+    
+    # Try to get git config from decrypted secrets first (if they exist)
+    GIT_USER_EMAIL="";
+    GIT_USER_NAME="";
+    
+    # Check if git config is available in environment (from decrypted secrets)
+    if [[ -n "${git_user_email:-}" && -n "${git_user_name:-}" ]]; then
+        GIT_USER_EMAIL="$git_user_email";
+        GIT_USER_NAME="$git_user_name";
+        log_info "Using git config from decrypted secrets";
+    else
+        # Fallback to old system git config if available
+        if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" ]]; then
+            GIT_USER_EMAIL=$(grep -E '^\s*email\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
+            GIT_USER_NAME=$(grep -E '^\s*name\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
+            log_info "Using git config from old system backup";
+        fi;
+    fi;
+    
+    # Set git configuration if we found it
+    if [[ -n "$GIT_USER_EMAIL" && -n "$GIT_USER_NAME" ]]; then
+        sudo -u "$TARGET_USER" git config --global user.email "$GIT_USER_EMAIL";
+        sudo -u "$TARGET_USER" git config --global user.name "$GIT_USER_NAME";
+        log_success "Git configured: $GIT_USER_NAME <$GIT_USER_EMAIL>";
+    else
+        log_warning "No git configuration found - please set manually with: git config --global user.email/user.name";
+    fi;
 
     # Install missing applications from inventory
     log_info "📦 Installing missing applications from inventory...";

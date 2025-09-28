@@ -14,11 +14,11 @@
 set -euo pipefail;
 
 # Colors for output
-readonly RED='\\033[0;31m';
-readonly GREEN='\\033[0;32m';
-readonly YELLOW='\\033[1;33m';
-readonly BLUE='\\033[0;34m';
-readonly NC='\\033[0m';  # No Color
+if [[ -z "${RED:-}" ]]; then readonly RED='\033[0;31m'; fi;
+if [[ -z "${GREEN:-}" ]]; then readonly GREEN='\033[0;32m'; fi;
+if [[ -z "${YELLOW:-}" ]]; then readonly YELLOW='\033[1;33m'; fi;
+if [[ -z "${BLUE:-}" ]]; then readonly BLUE='\033[0;34m'; fi;
+if [[ -z "${NC:-}" ]]; then readonly NC='\033[0m'; fi;
 
 # Logging functions
 log_info() { echo -e "${BLUE}[DISPLAY]${NC} $1"; };
