@@ -16,6 +16,7 @@ except ImportError:
 
 def main():
     secrets_file = "../data/encrypted_secrets.json"
+    restore_files = '--restore-files' in sys.argv or '-f' in sys.argv
     
     # Check if secrets file exists
     if not os.path.exists(secrets_file):
@@ -36,7 +37,10 @@ def main():
     # Initialize crypto and decrypt
     crypto = SecureBootstrapCrypto()
     try:
-        decrypted_data = crypto.decrypt_dict(encrypted_dict, password)
+        decrypted_data = crypto.decrypt_dict(encrypted_dict, password, restore_files=restore_files)
+        
+        if restore_files:
+            print(f"Files restored from encrypted secrets", file=sys.stderr)
         
         # Output as bash exports
         for key, value in decrypted_data.items():
