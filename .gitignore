@@ -17,8 +17,10 @@ scripts/bootstrap_standalone.sh
 
 # Backup Files  
 backup/
+*/backup/
 *.bak
 *.backup
+*2025*
 *~
 
 # Python
