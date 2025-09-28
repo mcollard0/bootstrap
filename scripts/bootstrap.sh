@@ -436,19 +436,29 @@ EOF
         };
         log_success "Cryptography packages installed";
         
-        # Attempt to decrypt and append secrets to .bashrc
-        log_info "Please enter your master password to decrypt environment variables...";
-        if sudo -u "$TARGET_USER" python3 "./decrypt_secrets.py" >> "$USER_HOME/.bashrc.temp" 2>/dev/null; then
+        # Attempt to decrypt and append secrets to .bashrc, and restore files
+        log_info "Please enter your master password to decrypt environment variables and files...";
+        if sudo -u "$TARGET_USER" python3 "./decrypt_secrets.py" --restore-files >> "$USER_HOME/.bashrc.temp" 2>"$USER_HOME/.secrets_restore.log"; then
             # Add a separator comment
             echo '' >> "$USER_HOME/.bashrc";
             echo '# Environment variables restored from encrypted secrets' >> "$USER_HOME/.bashrc";
             cat "$USER_HOME/.bashrc.temp" >> "$USER_HOME/.bashrc";
             rm "$USER_HOME/.bashrc.temp";
             chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.bashrc";
-            log_success "Encrypted environment variables restored to .bashrc";
+            log_success "Encrypted environment variables and files restored";
+            
+            # Show what files were restored
+            if [[ -f "$USER_HOME/.secrets_restore.log" ]]; then
+                while IFS= read -r line; do
+                    if [[ "$line" == *"Restored file:"* ]]; then
+                        log_info "$line";
+                    fi;
+                done < "$USER_HOME/.secrets_restore.log";
+                rm "$USER_HOME/.secrets_restore.log";
+            fi;
         else
-            rm -f "$USER_HOME/.bashrc.temp";
-            log_warning "Failed to decrypt secrets - please restore manually using ./decrypt_secrets.py";
+            rm -f "$USER_HOME/.bashrc.temp" "$USER_HOME/.secrets_restore.log";
+            log_warning "Failed to decrypt secrets - please restore manually using ./decrypt_secrets.py --restore-files";
         fi;
     else
         log_warning "No encrypted secrets file found - skipping secrets restoration";
@@ -527,51 +537,15 @@ EOF
     chmod 700 "$USER_HOME/.ssh";
     chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";
 
-    # Restore SSH private keys from encrypted secrets if available
-    if [[ -n "${ssh_id_ed25519:-}" ]]; then
-        echo "$ssh_id_ed25519" > "$USER_HOME/.ssh/id_ed25519";
-        chmod 600 "$USER_HOME/.ssh/id_ed25519";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519";
-        log_success "Restored SSH key: id_ed25519";
-    fi;
+    # SSH keys and other files are now automatically restored via file decryption
+    log_info "SSH keys and configuration files restored automatically from encrypted files";
     
-    if [[ -n "${ssh_id_ed25519_github:-}" ]]; then
-        echo "$ssh_id_ed25519_github" > "$USER_HOME/.ssh/id_ed25519_github";
-        chmod 600 "$USER_HOME/.ssh/id_ed25519_github";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_github";
-        log_success "Restored SSH key: id_ed25519_github";
-    fi;
-    
-    if [[ -n "${ssh_id_ed25519_mcollard:-}" ]]; then
-        echo "$ssh_id_ed25519_mcollard" > "$USER_HOME/.ssh/id_ed25519_mcollard";
-        chmod 600 "$USER_HOME/.ssh/id_ed25519_mcollard";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_mcollard";
-        log_success "Restored SSH key: id_ed25519_mcollard";
-    fi;
-
-    # Restore public keys (these are safe to include in the script)
-    cat > "$USER_HOME/.ssh/id_ed25519.pub" << 'EOF'
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKsCLUll8fV8DmFE/eDtmjBE/mO/R4nVAQHMFW273fWo michael@github-memento
-EOF
-    chmod 644 "$USER_HOME/.ssh/id_ed25519.pub";
-    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub";
-    
-    # Add other public keys if they exist in the old system
-    if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_github.pub" ]]; then
-        cp "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_github.pub" "$USER_HOME/.ssh/";
-        chmod 644 "$USER_HOME/.ssh/id_ed25519_github.pub";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_github.pub";
-    fi;
-    
-    if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_mcollard.pub" ]]; then
-        cp "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519_mcollard.pub" "$USER_HOME/.ssh/";
-        chmod 644 "$USER_HOME/.ssh/id_ed25519_mcollard.pub";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519_mcollard.pub";
-    fi;
-    
-    # Warn if no SSH keys were restored
-    if [[ -z "${ssh_id_ed25519:-}" && -z "${ssh_id_ed25519_github:-}" && -z "${ssh_id_ed25519_mcollard:-}" ]]; then
-        log_warning "No SSH private keys found in decrypted secrets - please restore manually if needed";
+    # Add fallback public keys if they exist in the old system (backup measure)
+    if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519.pub" ]]; then
+        cp "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519.pub" "$USER_HOME/.ssh/id_ed25519.pub.backup";
+        chmod 644 "$USER_HOME/.ssh/id_ed25519.pub.backup";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub.backup";
+        log_info "Backed up old system public key as .pub.backup";
     fi;
 
     log_success "SSH configuration restored";

@@ -16,7 +16,7 @@ import os;
 import base64;
 import secrets;
 import getpass;
-from typing import Tuple, Dict, Any;
+from typing import Tuple, Dict, Any, List;
 
 # Debug flag for password troubleshooting
 DEBUG_CRYPTO = os.environ.get( 'CRYPTO_DEBUG', '0' ) == '1';
@@ -50,6 +50,63 @@ class SecureBootstrapCrypto:
         """Initialize the cryptographic subsystem."""
         self.cipher = ChaCha20Poly1305;
         pass;
+    
+    def encrypt_bytes( self, data: bytes, password: str ) -> Dict[str, str]:
+        """Encrypt raw bytes; returns a dict with base64 fields and metadata."""
+        key, salt = self.derive_key( password );
+        nonce = secrets.token_bytes( self.CHACHA20_NONCE_LEN );
+        cipher = self.cipher( key );
+        ciphertext = cipher.encrypt( nonce, data, None );
+        key = b'\x00' * len( key );
+        return {
+            'ciphertext': base64.b64encode( ciphertext ).decode( 'ascii' ),
+            'nonce': base64.b64encode( nonce ).decode( 'ascii' ),
+            'salt': base64.b64encode( salt ).decode( 'ascii' ),
+            'algorithm': 'ChaCha20-Poly1305',
+            'kdf': 'Argon2id'
+        };
+    
+    def decrypt_bytes( self, enc: Dict[str, str], password: str ) -> bytes:
+        """Decrypt to raw bytes from an encrypted dict."""
+        ciphertext = base64.b64decode( enc['ciphertext'] );
+        nonce = base64.b64decode( enc['nonce'] );
+        salt = base64.b64decode( enc['salt'] );
+        if enc.get( 'algorithm' ) != 'ChaCha20-Poly1305':
+            raise ValueError( f"Unsupported algorithm: {enc.get('algorithm')}" );
+        key, _ = self.derive_key( password, salt );
+        cipher = self.cipher( key );
+        plaintext = cipher.decrypt( nonce, ciphertext, None );
+        key = b'\x00' * len( key );
+        return plaintext;
+    
+    def encrypt_file( self, path: str, password: str ) -> Dict[str, Any]:
+        """Encrypt a file's bytes and return an object including path and mode."""
+        st = os.stat( path );
+        mode = oct( st.st_mode )[-3:];
+        with open( path, 'rb' ) as f:
+            data = f.read();
+        enc = self.encrypt_bytes( data, password );
+        enc['path'] = path;
+        enc['mode'] = mode;
+        return enc;
+    
+    def decrypt_file_to_path( self, enc: Dict[str, Any], password: str, dest_path: str = None ) -> str:
+        """Decrypt an encrypted file object to dest_path (or its own path). Returns path written."""
+        out_path = dest_path or enc.get( 'path' );
+        if not out_path:
+            raise ValueError( 'Encrypted file object missing path' );
+        data = self.decrypt_bytes( enc, password );
+        os.makedirs( os.path.dirname( os.path.expanduser( out_path ) ), exist_ok=True );
+        p = os.path.expanduser( out_path );
+        with open( p, 'wb' ) as f:
+            f.write( data );
+        try:
+            mode = enc.get( 'mode' );
+            if mode and mode.isdigit():
+                os.chmod( p, int( mode, 8 ) );
+        except Exception:
+            pass;
+        return p;
     
     def derive_key( self, password: str, salt: bytes = None ) -> Tuple[bytes, bytes]:
         """
@@ -170,18 +227,20 @@ class SecureBootstrapCrypto:
                 print( f"🔍 Debug: Key length: {len(key) if 'key' in locals() else 'NOT_SET'}" );
             raise ValueError( f"Decryption failed - invalid password or corrupted data: {e}" );
     
-    def encrypt_dict( self, sensitive_data: Dict[str, Any], password: str ) -> Dict[str, Any]:
+    def encrypt_dict( self, sensitive_data: Dict[str, Any], password: str, file_paths: List[str] = None ) -> Dict[str, Any]:
         """
-        Encrypt a dictionary of sensitive key-value pairs.
+        Encrypt a dictionary of sensitive key-value pairs and optionally files.
         
         Args:
             sensitive_data: Dictionary with sensitive values
             password: Master password
+            file_paths: List of file paths to encrypt
             
         Returns:
-            Dictionary with encrypted values and metadata
+            Dictionary with encrypted values, files, and metadata
         """
         encrypted_items = {};
+        encrypted_files = {};
         
         for key, value in sensitive_data.items():
             if isinstance( value, str ) and value.strip():
@@ -189,19 +248,36 @@ class SecureBootstrapCrypto:
             else:
                 encrypted_items[key] = value;  # Keep non-string values as-is
         
-        return {
+        # Encrypt files if provided
+        if file_paths:
+            for file_path in file_paths:
+                if os.path.exists( os.path.expanduser( file_path ) ):
+                    try:
+                        file_key = os.path.basename( file_path );
+                        encrypted_files[file_key] = self.encrypt_file( os.path.expanduser( file_path ), password );
+                    except Exception as e:
+                        print( f"Warning: Could not encrypt file {file_path}: {e}" );
+        
+        result = {
             'encrypted_data': encrypted_items,
-            'version': '1.0',
+            'version': '2.0',
             'total_items': len( encrypted_items )
         };
+        
+        if encrypted_files:
+            result['encrypted_files'] = encrypted_files;
+            result['total_files'] = len( encrypted_files );
+        
+        return result;
     
-    def decrypt_dict( self, encrypted_dict: Dict[str, Any], password: str ) -> Dict[str, str]:
+    def decrypt_dict( self, encrypted_dict: Dict[str, Any], password: str, restore_files: bool = False ) -> Dict[str, str]:
         """
-        Decrypt a dictionary of encrypted values.
+        Decrypt a dictionary of encrypted values and optionally restore files.
         
         Args:
             encrypted_dict: Dictionary from encrypt_dict() method
             password: Master password
+            restore_files: If True, decrypt and restore encrypted files to filesystem
             
         Returns:
             Dictionary with decrypted plaintext values
@@ -214,6 +290,16 @@ class SecureBootstrapCrypto:
                 decrypted_data[key] = self.decrypt( encrypted_value, password );
             else:
                 decrypted_data[key] = encrypted_value;  # Non-encrypted values
+        
+        # Restore encrypted files if requested
+        if restore_files:
+            encrypted_files = encrypted_dict.get( 'encrypted_files', {} );
+            for file_key, encrypted_file in encrypted_files.items():
+                try:
+                    restored_path = self.decrypt_file_to_path( encrypted_file, password );
+                    print( f"  ✓ Restored file: {restored_path}" );
+                except Exception as e:
+                    print( f"  ⚠ Failed to restore {file_key}: {e}" );
         
         return decrypted_data;
 
