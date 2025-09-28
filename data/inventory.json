@@ -14395,6 +14395,17 @@
       "build_command": "mkdir -p build && cd build && cmake .. && make -j$(nproc)",
       "install_path": "/opt/whatsie",
       "desktop_file": true
+    },
+    {
+      "name": "noisetorch",
+      "type": "custom_application",
+      "installation_method": "build_from_source",
+      "git_remote": "https://github.com/noisetorch/NoiseTorch",
+      "prerequisites": ["gh", "git", "build-essential", "golang-go"],
+      "build_command": "make",
+      "install_path": "/opt/noisetorch",
+      "desktop_file": true,
+      "description": "Real-time microphone noise suppression on Linux"
     }
   ],
   "system_config": {
