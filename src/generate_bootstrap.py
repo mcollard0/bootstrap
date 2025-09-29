@@ -478,8 +478,12 @@ try:
     encrypted_json = base64.b64decode("$ENCRYPTED_SECRETS_B64").decode('utf-8');
     encrypted_data = json.loads(encrypted_json);
     
-    # Get password from user
-    password = getpass.getpass("Enter master password to decrypt secrets: ");
+    # Get password from user or environment variable
+    password = os.environ.get('BOOTSTRAP_SECRET')
+    if not password:
+        password = getpass.getpass("Enter master password to decrypt secrets: ")
+    else:
+        print("Using password from BOOTSTRAP_SECRET environment variable")
     
     # Decrypt each secret and append to .bashrc
     user_home = os.environ.get('USER_HOME', '/home/' + os.environ.get('SUDO_USER', 'user'));

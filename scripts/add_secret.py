@@ -8,13 +8,12 @@ Merged from add_ssh_to_secrets.py and add_files_to_secrets.py
 import json
 import sys
 import os
-import getpass
 import glob
 import argparse
 sys.path.insert(0, '../src')
 
 try:
-    from crypto_utils import SecureBootstrapCrypto
+    from crypto_utils import SecureBootstrapCrypto, prompt_for_password
 except ImportError:
     print("Error: Could not import crypto_utils. Please ensure it's in ../src/")
     sys.exit(1)
@@ -36,8 +35,8 @@ def main():
         print(f"Error reading {secrets_file}: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Get password from user
-    password = getpass.getpass("Enter master password to decrypt and update secrets: ")
+    # Get password from user or environment variable
+    password = prompt_for_password("secrets decryption and update")
     
     # Initialize crypto and decrypt existing secrets
     crypto = SecureBootstrapCrypto()

@@ -17,6 +17,7 @@ except ImportError:
 def main():
     secrets_file = "../data/encrypted_secrets.json"
     restore_files = '--restore-files' in sys.argv or '-f' in sys.argv
+    list_secrets = '--list-secrets' in sys.argv
     
     # Check if secrets file exists
     if not os.path.exists(secrets_file):
@@ -41,12 +42,36 @@ def main():
         
         if restore_files:
             print(f"Files restored from encrypted secrets", file=sys.stderr)
+            
+            # Write execution metadata for restored files
+            execution_metadata = {}
+            encrypted_files = encrypted_dict.get('encrypted_files', {})
+            for file_key, encrypted_file in encrypted_files.items():
+                # Check for execution step metadata in file description/path
+                file_path = encrypted_file.get('path', file_key)
+                if '|' in file_key and file_key.endswith('.sh'):
+                    # Extract execution step from file key (format: filename.sh|StepName)
+                    script_name, step_name = file_key.rsplit('|', 1)
+                    actual_path = f"./{script_name}"
+                    if step_name.strip():
+                        execution_metadata[step_name.strip()] = execution_metadata.get(step_name.strip(), []) + [actual_path]
+            
+            # Write execution metadata file for bootstrap to read
+            if execution_metadata:
+                with open('./file_execution_metadata.json', 'w') as f:
+                    json.dump(execution_metadata, f, indent=2)
+                print(f"Execution metadata written for {len(execution_metadata)} steps", file=sys.stderr)
         
-        # Output as bash exports
-        for key, value in decrypted_data.items():
-            # Shell-escape the value by wrapping in single quotes and escaping single quotes
-            escaped_value = value.replace("'", "'\"'\"'")
-            print(f"export {key}='{escaped_value}'")
+        # Output as bash exports (unless listing)
+        if not list_secrets:
+            for key, value in decrypted_data.items():
+                # Shell-escape the value by wrapping in single quotes and escaping single quotes
+                escaped_value = value.replace("'", "'\"'\"'")
+                print(f"export {key}='{escaped_value}'")
+        else:
+            # List secrets mode - show decrypted values
+            for key, value in decrypted_data.items():
+                print(f"export {key}='{value}'")
     
     except ValueError as e:
         print(f"Decryption failed: {e}", file=sys.stderr)
