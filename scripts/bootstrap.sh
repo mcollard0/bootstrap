@@ -572,6 +572,23 @@ EOF
         log_info "[Desktop] Installing additional tools...";
         apt install -y vim nano htop tree rsync zip unzip p7zip-full \
             net-tools openssh-client curl wget jq;
+        
+        # Install packages from inventory that were missed
+        log_info "[Desktop] Installing additional packages from inventory...";
+        apt install -y neofetch diodon || log_warning "Some inventory packages failed to install";
+        
+        # Install Plex Media Server (requires special handling)
+        log_info "[Desktop] Installing Plex Media Server...";
+        if ! dpkg -l | grep -q "plex\|plexmediaserver"; then
+            # Add Plex repository
+            curl -fsSL https://downloads.plex.tv/plex-keys/PlexSign.key | gpg --dearmor -o /usr/share/keyrings/plex.gpg;
+            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" > /etc/apt/sources.list.d/plexmediaserver.list;
+            apt update;
+            apt install -y plexmediaserver || log_warning "Failed to install Plex Media Server";
+            log_success "Plex Media Server installed";
+        else
+            log_info "Plex Media Server already installed";
+        fi;
 
         log_success "Essential APT packages installed successfully";
     fi;
