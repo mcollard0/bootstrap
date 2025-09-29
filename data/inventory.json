@@ -13859,6 +13859,30 @@
         "name": "neofetch",
         "version": "7.1.0-4",
         "status": "installed"
+      },
+      {
+        "name": "qtbase5-dev",
+        "version": "5.15.15+dfsg-4ubuntu1",
+        "status": "installed",
+        "description": "Qt5 base development files for Whatsie build"
+      },
+      {
+        "name": "qtwebengine5-dev",
+        "version": "5.15.18+dfsg-2",
+        "status": "installed",
+        "description": "Qt5 WebEngine development files for Whatsie build"
+      },
+      {
+        "name": "qt5-qmake",
+        "version": "5.15.15+dfsg-4ubuntu1",
+        "status": "installed",
+        "description": "Qt5 qmake build tool for Whatsie build"
+      },
+      {
+        "name": "qtwebengine5-dev-tools",
+        "version": "5.15.18+dfsg-2",
+        "status": "installed",
+        "description": "Qt5 WebEngine development tools including qwebengine_convert_dict"
       }
     ],
     "snap": [

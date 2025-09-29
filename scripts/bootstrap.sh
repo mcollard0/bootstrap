@@ -99,6 +99,44 @@ find_latest_package() {
     return 1;
 };
 
+# Extract APT packages from inventory.json
+get_inventory_apt_packages() {
+    local inventory_file="data/inventory.json";
+    
+    # Check if running from scripts directory and adjust path
+    if [[ "$(basename "$PWD")" == "scripts" ]]; then
+        inventory_file="../data/inventory.json";
+    fi;
+    local packages=();
+    
+    if [[ ! -f "$inventory_file" ]]; then
+        log_warning "inventory.json not found - using hardcoded package list";
+        return 1;
+    fi;
+    
+    # Ensure jq is available for JSON parsing
+    if ! command -v jq >/dev/null 2>&1; then
+        log_info "Installing jq for JSON parsing...";
+        apt install -y jq || {
+            log_warning "Failed to install jq - using hardcoded package list";
+            return 1;
+        };
+    fi;
+    
+    # Extract package names from inventory.json
+    mapfile -t packages < <(jq -r '.packages.apt[] | select(.status == "installed") | .name' "$inventory_file" 2>/dev/null || echo "");
+    
+    if [[ ${#packages[@]} -eq 0 ]]; then
+        log_warning "No packages found in inventory.json - using hardcoded list";
+        return 1;
+    fi;
+    
+    # Return packages via global variable
+    INVENTORY_PACKAGES=("${packages[@]}");
+    log_info "Found ${#packages[@]} packages in inventory.json";
+    return 0;
+};
+
 # Install package with automatic version detection
 install_latest_package() {
     local package_base="$1";
@@ -573,9 +611,52 @@ EOF
         apt install -y vim nano htop tree rsync zip unzip p7zip-full \
             net-tools openssh-client curl wget jq;
         
-        # Install packages from inventory that were missed
-        log_info "[Desktop] Installing additional packages from inventory...";
-        apt install -y neofetch diodon || log_warning "Some inventory packages failed to install";
+        # Install packages from inventory.json dynamically
+        log_info "[Desktop] Installing packages from inventory.json...";
+        
+        # Load packages from inventory.json
+        if get_inventory_apt_packages; then
+            log_info "Installing ${#INVENTORY_PACKAGES[@]} packages from inventory.json...";
+            
+            # Install packages in batches to avoid command line length limits
+            local batch_size=20;
+            local total=${#INVENTORY_PACKAGES[@]};
+            local installed=0;
+            
+            for ((i=0; i<total; i+=batch_size)); do
+                local batch=("${INVENTORY_PACKAGES[@]:$i:$batch_size}");
+                log_info "Installing batch $((i/batch_size + 1)): ${batch[*]}";
+                
+                # Filter out already installed packages to avoid unnecessary operations
+                local to_install=();
+                for pkg in "${batch[@]}"; do
+                    if ! is_apt_installed "$pkg"; then
+                        to_install+=("$pkg");
+                    fi;
+                done;
+                
+                if [[ ${#to_install[@]} -gt 0 ]]; then
+                    apt install -y "${to_install[@]}" || log_warning "Some packages in batch failed to install: ${to_install[*]}";
+                    installed=$((installed + ${#to_install[@]}));
+                else
+                    log_info "All packages in batch already installed";
+                fi;
+            done;
+            
+            log_success "Installed $installed new packages from inventory.json";
+            
+            # Ensure cpu-x is specifically included
+            if ! is_apt_installed "cpu-x"; then
+                log_info "Installing cpu-x specifically from inventory...";
+                apt install -y cpu-x || log_warning "Failed to install cpu-x";
+            else
+                log_info "cpu-x already installed";
+            fi;
+        else
+            # Fallback to hardcoded list if inventory.json fails
+            log_warning "Using fallback package list";
+            apt install -y neofetch diodon cpu-x || log_warning "Some fallback packages failed to install";
+        fi;
         
         # Install Plex Media Server (requires special handling)
         log_info "[Desktop] Installing Plex Media Server...";
@@ -916,8 +997,8 @@ EOF
     log_info "Building Whatsie from source...";
     WHATSIE_DIR="/opt/whatsie";
     
-    # Install build prerequisites
-    apt install -y build-essential cmake qt6-base-dev qt6-webengine-dev || {
+    # Install build prerequisites for Qt-based Whatsie (Qt5)
+    apt install -y build-essential qtbase5-dev qtwebengine5-dev qtwebengine5-dev-tools libx11-dev libx11-xcb-dev qt5-qmake || {
         log_warning "Failed to install Whatsie build dependencies - skipping Whatsie build";
     };
     
@@ -928,23 +1009,28 @@ EOF
         
         # Clone Whatsie if not already cloned
         if [[ ! -d "$WHATSIE_DIR/.git" ]]; then
-            sudo -u "$TARGET_USER" gh repo clone gsantner/whatsie "$WHATSIE_DIR" || {
+            # Ensure the parent directory has correct permissions for optdev group
+            if [[ ! -d "$WHATSIE_DIR" ]]; then
+                mkdir -p "$WHATSIE_DIR";
+                chown "$TARGET_USER:$TARGET_USER" "$WHATSIE_DIR";
+            fi;
+            
+            sudo -u "$TARGET_USER" git clone https://github.com/keshavbhatt/whatsie.git "$WHATSIE_DIR" || {
                 log_warning "Failed to clone Whatsie repository - skipping build";
             };
         fi;
         
         # Build Whatsie if source available
         if [[ -d "$WHATSIE_DIR/.git" ]]; then
-            cd "$WHATSIE_DIR";
+            cd "$WHATSIE_DIR/src";
             
-            # Create build directory and configure
-            sudo -u "$TARGET_USER" mkdir -p build;
-            cd build;
+            # Add Qt5 tools to PATH for build
+            export PATH="/usr/lib/qt5/bin:/usr/lib/x86_64-linux-gnu/qt5/bin:$PATH";
             
-            # Configure with CMake
-            if sudo -u "$TARGET_USER" cmake ..; then
+            # Configure with qmake (Qt5)
+            if sudo -u "$TARGET_USER" PATH="$PATH" qmake; then
                 # Build with multiple cores
-                if sudo -u "$TARGET_USER" make -j$(nproc); then
+                if sudo -u "$TARGET_USER" PATH="$PATH" make -j$(nproc); then
                     # Install the binary
                     cp whatsie /usr/local/bin/ || {
                         log_warning "Failed to install Whatsie binary to /usr/local/bin";
@@ -967,7 +1053,7 @@ EOF
                     log_warning "Failed to build Whatsie";
                 fi;
             else
-                log_warning "Failed to configure Whatsie build";
+                log_warning "Failed to configure Whatsie with qmake";
             fi;
         fi;
     fi;
