@@ -33,7 +33,10 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; };
 check_sudo() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run with sudo privileges for system-level changes";
-        log_info "Usage: sudo ./bootstrap_fixed.sh";
+        log_info "Usage: sudo ./bootstrap.sh [--start SECTION] [--step SECTION]";
+        log_info "  --start SECTION: Start from SECTION and run all subsequent sections";
+        log_info "  --step SECTION:  Run only the specified SECTION";
+        log_info "Available sections: System, Special, Display, Python, APT, Multimedia, Desktop, Snap, Sysctl, Bashrc, SSH, Git, Apps, Keyboard, Cron, Cleanup";
         exit 1;
     fi;
 };
@@ -61,10 +64,152 @@ is_flatpak_installed() {
     flatpak list | grep -q "$1" 2>/dev/null;
 };
 
+# Find the latest version of a package with version numbers
+find_latest_package() {
+    local package_base="$1";  # e.g. "libx264", "libavcodec-extra"
+    local result;
+    
+    # Search for packages with version numbers (runtime libraries)
+    # Look for pattern like package_base-123
+    result=$(apt list 2>/dev/null | grep -E "^${package_base}-[0-9]+/" | 
+             head -1 | sed 's|/.*||');
+    
+    if [[ -n "$result" ]]; then
+        echo "$result";
+        return 0;
+    fi;
+    
+    # Fallback: search for any package starting with the base name
+    result=$(apt list 2>/dev/null | grep -E "^${package_base}[0-9]*" | 
+             sed 's|/.*||' | 
+             sort -V | 
+             tail -1);
+    
+    if [[ -n "$result" ]]; then
+        echo "$result";
+        return 0;
+    else
+        # Last fallback to exact package name
+        if apt list "$package_base" 2>/dev/null | grep -q "^${package_base}/"; then
+            echo "$package_base";
+            return 0;
+        fi;
+    fi;
+    
+    return 1;
+};
+
+# Install package with automatic version detection
+install_latest_package() {
+    local package_base="$1";
+    local latest_pkg;
+    
+    if latest_pkg=$(find_latest_package "$package_base"); then
+        if ! is_apt_installed "$latest_pkg"; then
+            log_info "Installing latest version: $latest_pkg";
+            apt install -y "$latest_pkg" || log_warning "Failed to install $latest_pkg";
+        else
+            log_info "$latest_pkg already installed";
+        fi;
+    else
+        log_warning "No package found matching: $package_base";
+    fi;
+};
+
+# Post-step execution system - associative array to store scripts to run after steps
+declare -A POST_STEP_SCRIPTS;
+
+# Add script to run after a specific step
+add_post_step_script() {
+    local step="$1";
+    local script_path="$2";
+    if [[ -n "${POST_STEP_SCRIPTS[$step]:-}" ]]; then
+        POST_STEP_SCRIPTS[$step]="${POST_STEP_SCRIPTS[$step]};$script_path";
+    else
+        POST_STEP_SCRIPTS[$step]="$script_path";
+    fi;
+};
+
+# Execute post-step scripts for a given step
+run_post_step_scripts() {
+    local step="$1";
+    if [[ -n "${POST_STEP_SCRIPTS[$step]:-}" ]]; then
+        log_info "🔧 Running post-step scripts for [$step]...";
+        IFS=';' read -ra SCRIPTS <<< "${POST_STEP_SCRIPTS[$step]}";
+        for script in "${SCRIPTS[@]}"; do
+            if [[ -f "$script" ]]; then
+                log_info "Executing: $script";
+                chmod +x "$script";
+                if sudo -u "$TARGET_USER" BOOTSTRAP_SECRET="${BOOTSTRAP_SECRET:-}" bash "$script" "$TARGET_USER"; then
+                    log_success "Post-step script completed: $script";
+                else
+                    log_warning "Post-step script failed: $script";
+                fi;
+            else
+                log_warning "Post-step script not found: $script";
+            fi;
+        done;
+    fi;
+};
+
+# Parse command line arguments
+parse_args() {
+    START_SECTION="";
+    RUN_ONLY_SECTION="";
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --start)
+                START_SECTION="$2";
+                shift 2;
+                ;;
+            --step)
+                RUN_ONLY_SECTION="$2";
+                shift 2;
+                ;;
+            *)
+                log_error "Unknown argument: $1";
+                log_info "Usage: sudo ./bootstrap.sh [--start SECTION] [--step SECTION]";
+                log_info "  --start SECTION: Start from SECTION and run all subsequent sections";
+                log_info "  --step SECTION:  Run only the specified SECTION";
+                log_info "Available sections: System, Special, Display, Python, APT, Multimedia, Desktop, Snap, Sysctl, Bashrc, SSH, Git, Apps, Keyboard, Cron, Cleanup";
+                exit 1;
+                ;;
+        esac;
+    done;
+};
+
+# Check if we should skip to a specific section
+should_run_section() {
+    local section="$1";
+    
+    # If --step is specified, run only that specific section
+    if [[ -n "$RUN_ONLY_SECTION" ]]; then
+        if [[ "$RUN_ONLY_SECTION" == "$section" ]]; then
+            return 0;  # Run this section only
+        else
+            return 1;  # Skip all other sections
+        fi;
+    fi;
+    
+    # Original --start logic
+    if [[ -z "$START_SECTION" ]]; then
+        return 0;  # Run all sections
+    elif [[ "$START_SECTION" == "$section" ]]; then
+        START_SECTION="";  # Clear flag so subsequent sections run
+        return 0;  # Start running from this section
+    elif [[ -z "$START_SECTION" ]]; then
+        return 0;  # Continue running after start section
+    else
+        return 1;  # Skip this section
+    fi;
+};
+
 # Main restoration starts here
 main() {
+    parse_args "$@";
+    
     log_info "🚀 Starting Ubuntu Bootstrap Restoration (FIXED VERSION)";
-    log_info "=========================================================";
+    log_info "==========================================================";
     
     check_sudo;
     readonly TARGET_USER=$(check_user);
@@ -72,42 +217,125 @@ main() {
     
     log_info "Target user: $TARGET_USER";
     log_info "User home: $USER_HOME";
-    echo;
+    if [[ -n "$START_SECTION" ]]; then
+        log_info "Starting from section: $START_SECTION";
+    fi;
+    if [[ -n "$RUN_ONLY_SECTION" ]]; then
+        log_info "Running only section: $RUN_ONLY_SECTION";
+    fi;
+    
+    # Register post-step scripts
+    if [[ -f "./configure_keyboard_shortcuts.sh" ]]; then
+        add_post_step_script "Keyboard" "./configure_keyboard_shortcuts.sh";
+        log_info "Registered keyboard shortcuts script for Keyboard step";
+    fi;
+    
+    # Register scripts from decrypted files
+    if [[ -f "./install_0xproto_font.sh" ]]; then
+        add_post_step_script "System" "./install_0xproto_font.sh";
+        log_info "Registered 0xProto Nerd Font installation script for System step";
+    fi;
+    
     # System preparation
-    log_info "📦 Preparing system and updating package lists...";
-    apt update;
+    if should_run_section "System"; then
+        log_info "📦 [System] Preparing system and updating package lists...";
+        apt update;
+    fi;
     
     # Install essential prerequisites
-    log_info "🔧 Installing essential prerequisites...";
-    apt install -y curl wget gnupg software-properties-common apt-transport-https;
-    
-    # Remove Firefox if installed (as requested)
-    log_info "🦊 Checking Firefox installation...";
-    if is_snap_installed "firefox"; then
-        #log_warning "Removing Firefox snap package...";
-        #snap remove firefox;
-        log_success "Firefox snap removed";
+    if should_run_section "System"; then
+        log_info "🔧 [System] Installing essential prerequisites...";
+        apt install -y curl wget gnupg software-properties-common apt-transport-https;
+        
+        # Run any registered post-step scripts for System
+        run_post_step_scripts "System";
     fi;
     
-    if is_apt_installed "firefox"; then
-        log_warning "Removing Firefox APT package...";
-        #apt remove --purge -y firefox firefox-esr;
-        #apt autoremove -y;
-        log_success "Firefox APT package removed";
+    # Restore encrypted secrets EARLY (before any sections that might need them)
+    log_info "🔐 Restoring encrypted secrets and files...";
+    
+    # Backup existing .bashrc with timestamp
+    BASHRC_BACKUP="$USER_HOME/.bashrc.$(date -Iseconds)";
+    if [[ -f "$USER_HOME/.bashrc" ]]; then
+        cp "$USER_HOME/.bashrc" "$BASHRC_BACKUP";
+        chown "$TARGET_USER:$TARGET_USER" "$BASHRC_BACKUP";
+        log_info "Created .bashrc backup at $BASHRC_BACKUP";
     fi;
+    
+    # Check if encrypted secrets file exists
+    if [[ -f "../data/encrypted_secrets.json" ]]; then
+        # Install required Python packages for decryption (system-wide)
+        log_info "Installing cryptography packages for secret decryption...";
+        apt install -y python3-cryptography python3-argon2 || {
+            log_warning "Failed to install cryptography packages - skipping secrets restoration";
+        };
+        
+        if command -v python3 >/dev/null && python3 -c "import cryptography, argon2" 2>/dev/null; then
+            log_success "Cryptography packages installed";
+            
+            # Attempt to decrypt and append secrets to .bashrc, and restore files
+            log_info "Please enter your master password to decrypt environment variables and files...";
+            if sudo -u "$TARGET_USER" BOOTSTRAP_SECRET="${BOOTSTRAP_SECRET:-}" python3 "./decrypt_secrets.py" --restore-files >> "$USER_HOME/.bashrc.temp" 2>"$USER_HOME/.secrets_restore.log"; then
+                # Add a separator comment
+                echo '' >> "$USER_HOME/.bashrc";
+                echo '# Environment variables restored from encrypted secrets' >> "$USER_HOME/.bashrc";
+                cat "$USER_HOME/.bashrc.temp" >> "$USER_HOME/.bashrc";
+                rm "$USER_HOME/.bashrc.temp";
+                chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.bashrc";
+                log_success "Encrypted environment variables and files restored";
+                
+                # Show what files were restored
+                if [[ -f "$USER_HOME/.secrets_restore.log" ]]; then
+                    while IFS= read -r line; do
+                        if [[ "$line" == *"Restored file:"* ]]; then
+                            log_info "$line";
+                        fi;
+                    done < "$USER_HOME/.secrets_restore.log";
+                    rm "$USER_HOME/.secrets_restore.log";
+                fi;
+                
+                # Source .bashrc to load new environment variables for the current session
+                log_info "Loading updated environment variables...";
+                sudo -u "$TARGET_USER" bash -c "source '$USER_HOME/.bashrc'" || true;
+                
+                # Export environment variables to current shell session
+                if [[ -f "$USER_HOME/.bashrc" ]]; then
+                    set +u;  # Temporarily allow undefined variables
+                    while IFS= read -r line; do
+                        if [[ "$line" =~ ^export\ ([^=]+)= ]]; then
+                            var_name="${BASH_REMATCH[1]}";
+                            # Extract and export the variable
+                            eval "$line" 2>/dev/null || true;
+                        fi;
+                    done < "$USER_HOME/.bashrc";
+                    set -u;  # Re-enable undefined variable checking
+                fi;
+            else
+                rm -f "$USER_HOME/.bashrc.temp" "$USER_HOME/.secrets_restore.log";
+                log_warning "Failed to decrypt secrets - continuing without encrypted secrets";
+            fi;
+        else
+            log_warning "Cryptography packages not available - skipping secrets restoration";
+        fi;
+    else
+        log_warning "No encrypted secrets file found - skipping secrets restoration";
+    fi;
+    
     
     # Install and configure Flatpak
-    log_info "📦 Setting up Flatpak...";
-    if ! command -v flatpak >/dev/null 2>&1; then
-        log_info "Installing Flatpak...";
-        apt install -y flatpak;
-        
-        # Add Flathub repository
-        log_info "Adding Flathub repository...";
-        flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo;
-        log_success "Flatpak installed and configured";
-    else
-        log_info "Flatpak already installed";
+    if should_run_section "System"; then
+        log_info "📦 [System] Setting up Flatpak...";
+        if ! command -v flatpak >/dev/null 2>&1; then
+            log_info "Installing Flatpak...";
+            apt install -y flatpak;
+            
+            # Add Flathub repository
+            log_info "Adding Flathub repository...";
+            flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo;
+            log_success "Flatpak installed and configured";
+        else
+            log_info "Flatpak already installed";
+        fi;
     fi;
     
     # Disable Intel KVM virtualization modules
@@ -147,10 +375,12 @@ EOF
     log_success "Intel KVM modules disabled";
     
     # Install special packages with custom repositories
-    log_info "🌟 Installing special packages...";
+    if should_run_section "Special"; then
+        log_info "🌟 [Special] Installing special packages...";
+    fi;
     
     # Google Chrome - FIXED: Use modern keyring approach instead of deprecated apt-key
-    if ! is_apt_installed "google-chrome-stable"; then
+    if should_run_section "Special" && ! is_apt_installed "google-chrome-stable"; then
         log_info "Installing Google Chrome...";
         wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg;
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list;
@@ -162,7 +392,7 @@ EOF
     fi;
     
     # Warp Terminal (preview version) - Already using correct modern approach
-    if ! is_apt_installed "warp-terminal-preview"; then
+    if should_run_section "Special" && ! is_apt_installed "warp-terminal-preview"; then
         log_info "Installing Warp Terminal...";
         curl -fsSL https://releases.warp.dev/linux/keys/warp.asc | gpg --dearmor -o /usr/share/keyrings/warp.gpg;
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb preview main" > /etc/apt/sources.list.d/warp.list;
@@ -174,7 +404,7 @@ EOF
     fi;
     
     # Docker - Already using correct modern approach
-    if ! is_apt_installed "docker-ce"; then
+    if should_run_section "Special" && ! is_apt_installed "docker-ce"; then
         log_info "Installing Docker...";
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg;
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list;
@@ -189,7 +419,7 @@ EOF
     fi;
     
     # VirtualBox
-    if ! is_apt_installed "virtualbox"; then
+    if should_run_section "Special" && ! is_apt_installed "virtualbox"; then
         log_info "Installing VirtualBox...";
         apt install -y virtualbox virtualbox-ext-pack;
         log_success "VirtualBox installed";
@@ -198,7 +428,9 @@ EOF
     fi;
     
     # Configure display server for optimal compatibility
-    log_info "🖥️  Configuring display server for optimal compatibility...";
+    if should_run_section "Display"; then
+        log_info "🖥️  [Display] Configuring display server for optimal compatibility...";
+    fi;
     
     # Source display server configuration functions
     if [[ -f "./configure_display_server.sh" ]]; then
@@ -231,150 +463,182 @@ EOF
     fi;
 
     # Ensure pip3 is available before installing Python packages
-    log_info "🔧 Checking Python pip3 availability...";
-    if ! command -v pip3 >/dev/null 2>&1; then
-        log_info "Installing python3-pip...";
-        apt update;
-        apt install -y python3-pip;
-        log_success "pip3 installed";
-    else
-        log_info "pip3 already available";
+    if should_run_section "Python"; then
+        log_info "🔧 [Python] Checking Python pip3 availability...";
+        if ! command -v pip3 >/dev/null 2>&1; then
+            log_info "Installing python3-pip...";
+            apt update;
+            apt install -y python3-pip;
+            log_success "pip3 installed";
+        else
+            log_info "pip3 already available";
+        fi;
     fi;
     
     # Install APT packages - FIXED: Proper shell formatting with actual newlines
-    log_info "📦 Installing APT packages...";
+    if should_run_section "APT"; then
+        log_info "📦 [APT] Installing APT packages...";
+    fi;
 
     # Install packages in smaller, manageable batches to avoid timeout issues
     
     # Essential development tools and libraries
-    log_info "Installing essential development tools...";
-    apt install -y build-essential cmake ninja-build autoconf automake libtool \
-        pkg-config git git-man curl wget gnupg software-properties-common \
-        apt-transport-https ca-certificates;
+    if should_run_section "APT"; then
+        log_info "Installing essential development tools...";
+        apt install -y build-essential cmake ninja-build autoconf automake libtool \
+            pkg-config git git-man curl wget gnupg software-properties-common \
+            apt-transport-https;
 
-    # Core system packages
-    log_info "Installing core system packages...";
-    apt install -y 7zip accountsservice acl adduser base-files base-passwd \
-        bash bash-completion bc coreutils findutils grep gawk sed \
-        util-linux mount fdisk parted;
+        # Core system packages
+        log_info "Installing core system packages...";
+        apt install -y 7zip accountsservice acl adduser base-files base-passwd \
+            bash bash-completion bc coreutils findutils grep gawk sed \
+            util-linux mount fdisk parted;
 
-    # Development libraries and headers
-    log_info "Installing development libraries...";
-    apt install -y libc6-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev \
-        libreadline-dev libsqlite3-dev libncurses-dev libbz2-dev \
-        zlib1g-dev libgdbm-dev;
+        # Development libraries and headers
+        log_info "Installing development libraries...";
+        apt install -y libc6-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev \
+            libreadline-dev libsqlite3-dev libncurses-dev libbz2-dev \
+            zlib1g-dev libgdbm-dev;
 
-    # Python and related packages  
-    log_info "Installing Python packages...";
-    apt install -y python3 python3-dev python3-pip python3-venv python3-wheel \
-        python3-setuptools python3-apt python3-dbus;
+        # Python and related packages  
+        log_info "Installing Python packages...";
+        apt install -y python3 python3-dev python3-pip python3-venv python3-wheel \
+            python3-setuptools python3-apt python3-dbus;
 
-    # Multimedia and graphics
-    log_info "Installing multimedia packages...";
-    apt install -y ffmpeg imagemagick vlc vlc-bin vlc-data libdvd-pkg \
-        ubuntu-restricted-extras libavcodec-extra gstreamer1.0-plugins-base \
-        gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-        gstreamer1.0-libav gstreamer1.0-vaapi;
+        # Multimedia and graphics
+        log_info "Installing multimedia packages...";
+        apt install -y ffmpeg imagemagick vlc vlc-bin vlc-data libdvd-pkg \
+            ubuntu-restricted-extras gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+            gstreamer1.0-libav gstreamer1.0-vaapi;
+    fi;
 
     # Configure DVD decryption and multimedia codecs
-    log_info "🎬 Configuring multimedia codecs and DVD support...";
-    
-    # Configure libdvd-pkg for encrypted DVD playback
-    if dpkg-query -W -f="\${Status}" libdvd-pkg 2>/dev/null | grep -q "install ok installed"; then
-        # Reconfigure libdvd-pkg to install libdvdcss2
-        DEBIAN_FRONTEND=noninteractive dpkg-reconfigure libdvd-pkg;
-        log_success "DVD decryption configured";
+    if should_run_section "Multimedia"; then
+        log_info "🎬 [Multimedia] Configuring multimedia codecs and DVD support...";
     fi;
     
-    # Install additional codec packages that may not be in restricted-extras
-    apt install -y --no-install-recommends \
-        libavcodec-extra58 libavformat-extra58 libavutil-extra56 \
-        libx264-155 libx265-179 lame faac faad \
-        flac opus-tools vorbis-tools \
-        libmatroska-dev libmkv0 libebml-dev;
-    
-    # Install Microsoft Core Fonts (Method 3: Combined approach)
-    log_info "Installing Microsoft Core Fonts with EULA auto-acceptance...";
-    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections;
-    DEBIAN_FRONTEND=noninteractive apt install -y ttf-mscorefonts-installer;
-    log_success "Microsoft Core Fonts installed (EULA accepted)";
-    
-    # Ensure proper GStreamer codec registry is updated
-    sudo -u "$TARGET_USER" gst-inspect-1.0 > /dev/null 2>&1 || true;
-    
-    log_success "Multimedia codecs and fonts configured for MP4, MKV, DVD, and common formats";
+    # Configure libdvd-pkg for encrypted DVD playbook
+    if should_run_section "Multimedia"; then
+        if dpkg-query -W -f="\${Status}" libdvd-pkg 2>/dev/null | grep -q "install ok installed"; then
+            # Reconfigure libdvd-pkg to install libdvdcss2
+            DEBIAN_FRONTEND=noninteractive dpkg-reconfigure libdvd-pkg;
+            log_success "DVD decryption configured";
+        fi;
+        
+        # Install additional codec packages with automatic version detection
+        log_info "Installing multimedia codec packages with latest versions...";
+        
+        # Core multimedia packages that should always be available
+        apt install -y --no-install-recommends lame flac opus-tools vorbis-tools;
+        
+        # Install versioned packages using latest available versions
+        install_latest_package "libavcodec-extra";
+        install_latest_package "libavformat-extra";
+        install_latest_package "libavutil-extra";
+        install_latest_package "libx264";
+        install_latest_package "libx265";
+        
+        # Optional packages (install if available)
+        for pkg in faac faad libmatroska-dev libmkv libebml-dev; do
+            if latest_pkg=$(find_latest_package "$pkg"); then
+                install_latest_package "$pkg";
+            else
+                log_info "Optional package $pkg not available, skipping";
+            fi;
+        done;
+        
+        # Install Microsoft Core Fonts (Method 3: Combined approach)
+        log_info "Installing Microsoft Core Fonts with EULA auto-acceptance...";
+        echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections;
+        DEBIAN_FRONTEND=noninteractive apt install -y ttf-mscorefonts-installer;
+        log_success "Microsoft Core Fonts installed (EULA accepted)";
+        
+        # Ensure proper GStreamer codec registry is updated
+        sudo -u "$TARGET_USER" gst-inspect-1.0 > /dev/null 2>&1 || true;
+        
+        log_success "Multimedia codecs and fonts configured for MP4, MKV, DVD, and common formats";
+    fi;
 
 
     # Desktop environment essentials
-    log_info "Installing desktop environment packages...";
-    apt install -y ubuntu-desktop-minimal gnome-shell gnome-terminal \
-        nautilus gdm3 dconf-editor;
+    if should_run_section "Desktop"; then
+        log_info "[Desktop] Installing desktop environment packages...";
+        apt install -y ubuntu-desktop-minimal gnome-shell gnome-terminal \
+            nautilus gdm3 dconf-editor;
 
-    # Additional useful tools
-    log_info "Installing additional tools...";
-    apt install -y vim nano htop tree rsync zip unzip p7zip-full \
-        net-tools openssh-client curl wget jq;
+        # Additional useful tools
+        log_info "[Desktop] Installing additional tools...";
+        apt install -y vim nano htop tree rsync zip unzip p7zip-full \
+            net-tools openssh-client curl wget jq;
 
-    log_success "Essential APT packages installed successfully";
+        log_success "Essential APT packages installed successfully";
+    fi;
 
     # Install Snap packages - FIXED: Proper formatting
-    log_info "📦 Installing Snap packages...";
-
-    if ! is_snap_installed "bare"; then
-        snap install bare --channel=5;
-        log_success "Installed snap: bare";
+    if should_run_section "Snap"; then
+        log_info "📦 [Snap] Installing Snap packages...";
     fi;
 
-    if ! is_snap_installed "desktop-security-center"; then
-        snap install desktop-security-center --channel=59;
-        log_success "Installed snap: desktop-security-center";
+    if should_run_section "Snap"; then
+        if ! is_snap_installed "bare"; then
+            snap install bare --stable;
+            log_success "Installed snap: bare";
+        fi;
+
+        if ! is_snap_installed "desktop-security-center"; then
+            snap install desktop-security-center --stable;
+            log_success "Installed snap: desktop-security-center";
+        fi;
+
+        if ! is_snap_installed "firmware-updater"; then
+            snap install firmware-updater --stable;
+            log_success "Installed snap: firmware-updater";
+        fi;
+
+        if ! is_snap_installed "gh"; then
+            snap install gh --stable;
+            log_success "Installed snap: gh";
+        fi;
+
+        if ! is_snap_installed "gnome-42-2204"; then
+            snap install gnome-42-2204 --stable;
+            log_success "Installed snap: gnome-42-2204";
+        fi;
+
+        if ! is_snap_installed "gtk-common-themes"; then
+            snap install gtk-common-themes --stable;
+            log_success "Installed snap: gtk-common-themes";
+        fi;
+
+        if ! is_snap_installed "prompting-client"; then
+            snap install prompting-client --stable;
+            log_success "Installed snap: prompting-client";
+        fi;
+
+        if ! is_snap_installed "qmmp"; then
+            snap install qmmp --stable;
+            log_success "Installed snap: qmmp";
+        fi;
+
+        if ! is_snap_installed "snap-store"; then
+            snap install snap-store --stable;
+            log_success "Installed snap: snap-store";
+        fi;
+
+        if ! is_snap_installed "snapd-desktop-integration"; then
+            snap install snapd-desktop-integration --stable;
+            log_success "Installed snap: snapd-desktop-integration";
+        fi;
     fi;
 
-    if ! is_snap_installed "firmware-updater"; then
-        snap install firmware-updater --channel=167;
-        log_success "Installed snap: firmware-updater";
-    fi;
+    # Install Python packages - FIXED: System-wide installation
+    if should_run_section "Python"; then
+        log_info "🐍 [Python] Installing Python packages system-wide...";
 
-    if ! is_snap_installed "gh"; then
-        snap install gh --stable;
-        log_success "Installed snap: gh";
-    fi;
-
-    if ! is_snap_installed "gnome-42-2204"; then
-        snap install gnome-42-2204 --channel=202;
-        log_success "Installed snap: gnome-42-2204";
-    fi;
-
-    if ! is_snap_installed "gtk-common-themes"; then
-        snap install gtk-common-themes --channel=1535;
-        log_success "Installed snap: gtk-common-themes";
-    fi;
-
-    if ! is_snap_installed "prompting-client"; then
-        snap install prompting-client --channel=104;
-        log_success "Installed snap: prompting-client";
-    fi;
-
-    if ! is_snap_installed "qmmp"; then
-        snap install qmmp --channel=180;
-        log_success "Installed snap: qmmp";
-    fi;
-
-    if ! is_snap_installed "snap-store"; then
-        snap install snap-store --channel=1270;
-        log_success "Installed snap: snap-store";
-    fi;
-
-    if ! is_snap_installed "snapd-desktop-integration"; then
-        snap install snapd-desktop-integration --channel=315;
-        log_success "Installed snap: snapd-desktop-integration";
-    fi;
-
-    # Install Python packages - FIXED: Proper formatting
-    log_info "🐍 Installing Python packages...";
-
-    # Create temporary requirements file with essential packages only
-    cat > /tmp/bootstrap_requirements.txt << 'EOF'
+        # Create temporary requirements file with essential packages only
+        cat > /tmp/bootstrap_requirements.txt << 'EOF'
 # Essential Python packages
 requests==2.32.3
 urllib3==2.3.0
@@ -390,15 +654,20 @@ wheel
 pip
 EOF
 
-    # Install packages as target user
-    sudo -u "$TARGET_USER" pip3 install -r /tmp/bootstrap_requirements.txt --user;
-    rm /tmp/bootstrap_requirements.txt;
-    log_success "Essential Python packages installed";
+        # Install packages system-wide using --break-system-packages flag
+        log_info "Installing Python packages system-wide (breaking system package isolation)...";
+        pip3 install -r /tmp/bootstrap_requirements.txt --break-system-packages;
+        rm /tmp/bootstrap_requirements.txt;
+        log_success "Essential Python packages installed system-wide";
+    fi;
 
     # Apply custom sysctl settings - FIXED: Proper formatting
-    log_info "⚙️ Applying custom sysctl settings...";
+    if should_run_section "Sysctl"; then
+        log_info "⚙️ [Sysctl] Applying custom sysctl settings...";
+    fi;
 
-    cat > /etc/sysctl.d/99-bootstrap.conf << 'EOF'
+    if should_run_section "Sysctl"; then
+        cat > /etc/sysctl.d/99-bootstrap.conf << 'EOF'
 # Custom sysctl settings restored by bootstrap
 vm.swappiness = 60
 fs.inotify.max_user_watches = 65536
@@ -406,81 +675,49 @@ net.core.somaxconn = 4096
 kernel.shmmax = 18446744073692774399
 EOF
 
-    sysctl -p /etc/sysctl.d/99-bootstrap.conf;
-    log_success "Applied 4 sysctl settings";
+        sysctl -p /etc/sysctl.d/99-bootstrap.conf;
+        log_success "Applied 4 sysctl settings";
+    fi;
 
     # Restore .bashrc customizations - FIXED: Proper formatting
-    log_info "🐚 Restoring .bashrc customizations...";
-
-    # Add safe customizations
-    echo 'export gmail_sender_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
-    echo 'export gmail_recipient_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
-    echo 'if ! command -v code &> /dev/null; then' >> "$USER_HOME/.bashrc";
-    echo 'if command -v code-insiders &> /dev/null; then' >> "$USER_HOME/.bashrc";
-    echo 'alias code=code-insiders' >> "$USER_HOME/.bashrc";
-    echo 'fi' >> "$USER_HOME/.bashrc";
-    echo 'fi' >> "$USER_HOME/.bashrc";
-
-    # Restore encrypted secrets
-    log_info "🔐 Restoring encrypted environment variables...";
-    
-    # Backup existing .bashrc with timestamp
-    BASHRC_BACKUP="$USER_HOME/.bashrc.$(date -Iseconds)";
-    if [[ -f "$USER_HOME/.bashrc" ]]; then
-        cp "$USER_HOME/.bashrc" "$BASHRC_BACKUP";
-        chown "$TARGET_USER:$TARGET_USER" "$BASHRC_BACKUP";
-        log_info "Created .bashrc backup at $BASHRC_BACKUP";
-    fi;
-    
-    # Check if encrypted secrets file exists
-    if [[ -f "../data/encrypted_secrets.json" ]]; then
-        # Install required Python packages for decryption (system-wide)
-        log_info "Installing cryptography packages for secret decryption...";
-        apt install -y python3-cryptography python3-argon2 || {
-            log_warning "Failed to install cryptography packages - skipping secrets restoration";
-            return 0;
-        };
-        log_success "Cryptography packages installed";
-        
-        # Attempt to decrypt and append secrets to .bashrc, and restore files
-        log_info "Please enter your master password to decrypt environment variables and files...";
-        if sudo -u "$TARGET_USER" python3 "./decrypt_secrets.py" --restore-files >> "$USER_HOME/.bashrc.temp" 2>"$USER_HOME/.secrets_restore.log"; then
-            # Add a separator comment
-            echo '' >> "$USER_HOME/.bashrc";
-            echo '# Environment variables restored from encrypted secrets' >> "$USER_HOME/.bashrc";
-            cat "$USER_HOME/.bashrc.temp" >> "$USER_HOME/.bashrc";
-            rm "$USER_HOME/.bashrc.temp";
-            chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.bashrc";
-            log_success "Encrypted environment variables and files restored";
-            
-            # Show what files were restored
-            if [[ -f "$USER_HOME/.secrets_restore.log" ]]; then
-                while IFS= read -r line; do
-                    if [[ "$line" == *"Restored file:"* ]]; then
-                        log_info "$line";
-                    fi;
-                done < "$USER_HOME/.secrets_restore.log";
-                rm "$USER_HOME/.secrets_restore.log";
-            fi;
-        else
-            rm -f "$USER_HOME/.bashrc.temp" "$USER_HOME/.secrets_restore.log";
-            log_warning "Failed to decrypt secrets - please restore manually using ./decrypt_secrets.py --restore-files";
-        fi;
-    else
-        log_warning "No encrypted secrets file found - skipping secrets restoration";
+    if should_run_section "Bashrc"; then
+        log_info "🐚 [Bashrc] Restoring .bashrc customizations...";
     fi;
 
+    if should_run_section "Bashrc"; then
+        # Add safe customizations
+        echo 'export gmail_sender_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
+        echo 'export gmail_recipient_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
+        echo 'if ! command -v code &> /dev/null; then' >> "$USER_HOME/.bashrc";
+        echo 'if command -v code-insiders &> /dev/null; then' >> "$USER_HOME/.bashrc";
+        echo 'alias code=code-insiders' >> "$USER_HOME/.bashrc";
+        echo 'fi' >> "$USER_HOME/.bashrc";
+        echo 'fi' >> "$USER_HOME/.bashrc";
+    fi;
+
+    # Note: Encrypted secrets are now restored early in the bootstrap process
+    
     log_success ".bashrc customizations restored";
-    
-    # Source .bashrc to load new environment variables
-    log_info "Loading updated environment variables...";
-    sudo -u "$TARGET_USER" bash -c "source '$USER_HOME/.bashrc'" || true;
 
     # Install custom services - FIXED: Proper formatting
     log_info "🔧 Installing custom services...";
 
     # Install GridShift - Automated Media Download Manager
     log_info "Installing GridShift from GitHub...";
+    
+    # Check GitHub CLI authentication status before using gh commands
+    log_info "Checking GitHub CLI authentication...";
+    if ! sudo -u "$TARGET_USER" gh auth status >/dev/null 2>&1; then
+        log_warning "GitHub CLI not authenticated. Attempting to authenticate...";
+        log_info "Please complete GitHub authentication when prompted:";
+        if sudo -u "$TARGET_USER" gh auth login --web; then
+            log_success "GitHub CLI authentication completed";
+        else
+            log_warning "GitHub CLI authentication failed - repository cloning may not work";
+        fi;
+    else
+        log_success "GitHub CLI already authenticated";
+    fi;
     
     # Create installation directory
     GRIDSHIFT_DIR="/opt/gridshift";
@@ -489,8 +726,8 @@ EOF
     
     # Check if repository exists before cloning
     if [[ ! -d "$GRIDSHIFT_DIR/.git" ]]; then
-        # Clone GridShift repository
-        sudo -u "$TARGET_USER" git clone https://github.com/mcollard0/gridshift.git "$GRIDSHIFT_DIR" || {
+        # Clone GridShift repository using gh
+        sudo -u "$TARGET_USER" gh repo clone mcollard0/gridshift "$GRIDSHIFT_DIR" || {
             log_warning "GridShift repository not accessible - skipping installation";
         };
     fi;
@@ -536,12 +773,16 @@ EOF
     log_success "Custom services installation completed";
 
     # Restore SSH keys and configuration - FIXED: Proper formatting
-    log_info "🔑 Restoring SSH keys and configuration...";
+    if should_run_section "SSH"; then
+        log_info "🔑 [SSH] Restoring SSH keys and configuration...";
+    fi;
 
-    # Create .ssh directory with proper permissions
-    sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.ssh";
-    chmod 700 "$USER_HOME/.ssh";
-    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";
+    if should_run_section "SSH"; then
+        # Create .ssh directory with proper permissions
+        sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.ssh";
+        chmod 700 "$USER_HOME/.ssh";
+        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";
+    fi;
 
     # SSH keys and other files are now automatically restored via file decryption
     log_info "SSH keys and configuration files restored automatically from encrypted files";
@@ -555,39 +796,62 @@ EOF
     fi;
 
     log_success "SSH configuration restored";
+    
+    # Run any registered post-step scripts for SSH
+    run_post_step_scripts "SSH";
 
     # Restore git configuration
-    log_info "🔧 Configuring git user identity...";
+    if should_run_section "Git"; then
+        log_info "🔧 [Git] Configuring git user identity...";
+    fi;
     
-    # Try to get git config from decrypted secrets first (if they exist)
-    GIT_USER_EMAIL="";
-    GIT_USER_NAME="";
+    if should_run_section "Git"; then
+        # Try to get git config from decrypted secrets first (if they exist)
+        GIT_USER_EMAIL="";
+        GIT_USER_NAME="";
+    fi;
     
-    # Check if git config is available in environment (from decrypted secrets)
-    if [[ -n "${git_user_email:-}" && -n "${git_user_name:-}" ]]; then
-        GIT_USER_EMAIL="$git_user_email";
-        GIT_USER_NAME="$git_user_name";
-        log_info "Using git config from decrypted secrets";
+    # Check if .gitconfig was restored from encrypted secrets
+    if [[ -f "$USER_HOME/.gitconfig" ]]; then
+        log_success "Git configuration restored from encrypted .gitconfig file";
+        # Extract values from restored .gitconfig for display
+        GIT_USER_EMAIL=$(sudo -u "$TARGET_USER" git config --get user.email 2>/dev/null || echo "");
+        GIT_USER_NAME=$(sudo -u "$TARGET_USER" git config --get user.name 2>/dev/null || echo "");
+        if [[ -n "$GIT_USER_EMAIL" && -n "$GIT_USER_NAME" ]]; then
+            log_success "Git configured: $GIT_USER_NAME <$GIT_USER_EMAIL>";
+        fi;
     else
-        # Fallback to old system git config if available
-        if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" ]]; then
-            GIT_USER_EMAIL=$(grep -E '^\s*email\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
-            GIT_USER_NAME=$(grep -E '^\s*name\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
-            log_info "Using git config from old system backup";
+        # Check if git config is available in environment variables (from decrypted secrets)
+        if [[ -n "${git_user_email:-}" && -n "${git_user_name:-}" ]]; then
+            GIT_USER_EMAIL="$git_user_email";
+            GIT_USER_NAME="$git_user_name";
+            log_info "Using git config from decrypted environment variables";
+        else
+            # Final fallback to old system git config if available
+            if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" ]]; then
+                GIT_USER_EMAIL=$(grep -E '^\s*email\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
+                GIT_USER_NAME=$(grep -E '^\s*name\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
+                log_info "Using git config from old system backup";
+            fi;
+        fi;
+        
+        # Set git configuration if we found it via environment/fallback
+        if [[ -n "$GIT_USER_EMAIL" && -n "$GIT_USER_NAME" ]]; then
+            sudo -u "$TARGET_USER" git config --global user.email "$GIT_USER_EMAIL";
+            sudo -u "$TARGET_USER" git config --global user.name "$GIT_USER_NAME";
+            log_success "Git configured: $GIT_USER_NAME <$GIT_USER_EMAIL>";
+        else
+            log_warning "No git configuration found - please set manually with: git config --global user.email/user.name";
         fi;
     fi;
     
-    # Set git configuration if we found it
-    if [[ -n "$GIT_USER_EMAIL" && -n "$GIT_USER_NAME" ]]; then
-        sudo -u "$TARGET_USER" git config --global user.email "$GIT_USER_EMAIL";
-        sudo -u "$TARGET_USER" git config --global user.name "$GIT_USER_NAME";
-        log_success "Git configured: $GIT_USER_NAME <$GIT_USER_EMAIL>";
-    else
-        log_warning "No git configuration found - please set manually with: git config --global user.email/user.name";
-    fi;
+    # Run any registered post-step scripts for Git
+    run_post_step_scripts "Git";
 
     # Install missing applications from inventory
-    log_info "📦 Installing missing applications from inventory...";
+    if should_run_section "Apps"; then
+        log_info "📦 [Apps] Installing missing applications from inventory...";
+    fi;
     
     # Install prerequisites first (after SSH keys are restored)
     log_info "Installing prerequisites for custom applications...";
@@ -647,7 +911,7 @@ EOF
         
         # Clone Whatsie if not already cloned
         if [[ ! -d "$WHATSIE_DIR/.git" ]]; then
-            sudo -u "$TARGET_USER" git clone https://github.com/gsantner/whatsie.git "$WHATSIE_DIR" || {
+            sudo -u "$TARGET_USER" gh repo clone gsantner/whatsie "$WHATSIE_DIR" || {
                 log_warning "Failed to clone Whatsie repository - skipping build";
             };
         fi;
@@ -708,7 +972,7 @@ EOF
         
         # Clone NoiseTorch if not already cloned
         if [[ ! -d "$NOISETORCH_DIR/.git" ]]; then
-            sudo -u "$TARGET_USER" git clone https://github.com/noisetorch/NoiseTorch.git "$NOISETORCH_DIR" || {
+            sudo -u "$TARGET_USER" gh repo clone noisetorch/NoiseTorch "$NOISETORCH_DIR" || {
                 log_warning "Failed to clone NoiseTorch repository - skipping build";
             };
         fi;
@@ -752,37 +1016,59 @@ EOF
     log_success "Missing applications installation completed";
 
     # Configure keyboard shortcuts
-    log_info "⌨️  Configuring custom keyboard shortcuts...";
-    
-    # Source the keyboard shortcuts configuration script
-    if [[ -f "./configure_keyboard_shortcuts.sh" ]]; then
-        source "./configure_keyboard_shortcuts.sh";
-        configure_shortcuts "";
-        log_success "Custom keyboard shortcuts configured";
-    else
-        log_warning "Keyboard shortcuts script not found - skipping";
+    if should_run_section "Keyboard"; then
+        log_info "⌨️  [Keyboard] Configuring custom keyboard shortcuts...";
+        
+        # Run any registered post-step scripts for keyboard configuration
+        run_post_step_scripts "Keyboard";
+        
+        log_success "Keyboard configuration completed";
     fi;
 
     # Restore cron jobs - FIXED: Proper formatting
-    log_info "⏰ Restoring cron jobs...";
+    if should_run_section "Cron"; then
+        log_info "⏰ [Cron] Restoring cron jobs...";
+    fi;
 
-    # Create temporary crontab file
-    cat > /tmp/bootstrap_crontab << 'EOF'
+    if should_run_section "Cron"; then
+        # Create temporary crontab file
+        cat > /tmp/bootstrap_crontab << 'EOF'
 MAILTO=""
 PATH=/usr/local/bin:/usr/bin:/bin
 HOME=/home/michael
 0 3 * * * cd $HOME && python3 KCRestaurants.py --ephemeral >> $HOME/logs/kc_restaurants/kc_$(date +\%F).log 2>&1
 EOF
 
-    # Install crontab for target user
-    sudo -u "$TARGET_USER" crontab /tmp/bootstrap_crontab;
-    rm /tmp/bootstrap_crontab;
-    log_success "Restored cron jobs";
+        # Install crontab for target user
+        sudo -u "$TARGET_USER" crontab /tmp/bootstrap_crontab;
+        rm /tmp/bootstrap_crontab;
+        log_success "Restored cron jobs";
+        
+        # Run any registered post-step scripts for Cron
+        run_post_step_scripts "Cron";
+    fi;
 
+    # Remove Firefox if installed (moved to end to avoid interference with installations)
+    log_info "🦊 [Firefox] Removing Firefox browser...";
+    if is_snap_installed "firefox"; then
+        log_warning "Removing Firefox snap package...";
+        snap remove firefox;
+        log_success "Firefox snap removed";
+    fi;
+    
+    if is_apt_installed "firefox"; then
+        log_warning "Removing Firefox APT package...";
+        apt remove --purge -y firefox firefox-esr;
+        apt autoremove -y;
+        log_success "Firefox APT package removed";
+    fi;
+    
     # Final steps and completion
-    log_info "🧹 Performing final cleanup...";
-    apt autoremove -y;
-    apt autoclean;
+    if should_run_section "Cleanup"; then
+        log_info "🧹 [Cleanup] Performing final cleanup...";
+        apt autoremove -y;
+        apt autoclean;
+    fi;
     
     log_success "🎉 Ubuntu Bootstrap restoration completed successfully!";
     log_info "📝 Summary of changes:";

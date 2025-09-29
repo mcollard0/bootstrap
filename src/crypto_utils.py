@@ -331,16 +331,25 @@ class SecureBootstrapCrypto:
         return decrypted_data;
 
 
-def prompt_for_password( purpose: str = "encryption" ) -> str:
+
+def prompt_for_password( purpose: str = "encryption", allow_env_fallback: bool = True ) -> str:
     """
-    Securely prompt user for password.
+    Securely prompt user for password, with optional environment variable fallback.
     
     Args:
         purpose: Description of what the password is for
+        allow_env_fallback: If True, check BOOTSTRAP_SECRET environment variable first
         
     Returns:
         Password string
     """
+    # Check for environment variable first (for unattended operation)
+    if allow_env_fallback:
+        env_password = os.environ.get( 'BOOTSTRAP_SECRET' );
+        if env_password:
+            print( f"Using password from BOOTSTRAP_SECRET environment variable for {purpose}" );
+            return env_password;
+    
     try:
         password = getpass.getpass( f"Enter master password for {purpose}: " );
         if not password or len( password ) < 8:

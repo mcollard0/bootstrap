@@ -609,6 +609,11 @@
         "status": "installed"
       },
       {
+        "name": "diodon",
+        "version": "1.13.0-1ubuntu3",
+        "status": "installed"
+      },
+      {
         "name": "dconf-cli",
         "version": "0.40.0-5",
         "status": "installed"
@@ -2494,8 +2499,8 @@
         "status": "installed"
       },
       {
-        "name": "libavcodec61:amd64",
-        "version": "7:7.1.1-1ubuntu1.2",
+        "name": "libavcodec*:amd64",
+        "version": "latest",
         "status": "installed"
       },
       {
@@ -2524,8 +2529,8 @@
         "status": "installed"
       },
       {
-        "name": "libavformat61:amd64",
-        "version": "7:7.1.1-1ubuntu1.2",
+        "name": "libavformat*:amd64",
+        "version": "latest",
         "status": "installed"
       },
       {
@@ -2539,8 +2544,8 @@
         "status": "installed"
       },
       {
-        "name": "libavutil59:amd64",
-        "version": "7:7.1.1-1ubuntu1.2",
+        "name": "libavutil*:amd64",
+        "version": "latest",
         "status": "installed"
       },
       {
@@ -8559,13 +8564,13 @@
         "status": "installed"
       },
       {
-        "name": "libx264-164:amd64",
-        "version": "2:0.164.3108+git31e19f9-2build2",
+        "name": "libx264-*:amd64",
+        "version": "latest",
         "status": "installed"
       },
       {
-        "name": "libx265-215:amd64",
-        "version": "4.1-2",
+        "name": "libx265-*:amd64",
+        "version": "latest",
         "status": "installed"
       },
       {
@@ -11614,6 +11619,11 @@
         "status": "installed"
       },
       {
+        "name": "plex-media-server",
+        "version": "1.41.0.8994-f2c27da23",
+        "status": "installed"
+      },
+      {
         "name": "pkg-config:amd64",
         "version": "1.8.1-4",
         "status": "installed"
@@ -13844,13 +13854,18 @@
         "name": "anki",
         "version": "latest",
         "status": "installed"
+      },
+      {
+        "name": "neofetch",
+        "version": "7.1.0-4",
+        "status": "installed"
       }
     ],
     "snap": [
       {
         "name": "bare",
         "version": "1.0",
-        "channel": "5"
+        "channel": "stable"
       },
       {
         "name": "core18",
@@ -13870,42 +13885,42 @@
       {
         "name": "desktop-security-center",
         "version": "0+git.f7ad73a",
-        "channel": "59"
+        "channel": "stable"
       },
       {
         "name": "firmware-updater",
         "version": "0+git.22198be",
-        "channel": "167"
+        "channel": "stable"
       },
       {
         "name": "gh",
         "version": "2.74.0-19-gea8fc856e",
-        "channel": "640"
+        "channel": "stable"
       },
       {
         "name": "gnome-42-2204",
         "version": "0+git.38ea591",
-        "channel": "202"
+        "channel": "stable"
       },
       {
         "name": "gtk-common-themes",
         "version": "0.1-81-g442e511",
-        "channel": "1535"
+        "channel": "stable"
       },
       {
         "name": "prompting-client",
         "version": "0+git.d542a5d",
-        "channel": "104"
+        "channel": "stable"
       },
       {
         "name": "qmmp",
         "version": "1.6.2",
-        "channel": "180"
+        "channel": "stable"
       },
       {
         "name": "snap-store",
         "version": "0+git.90575829",
-        "channel": "1270"
+        "channel": "stable"
       },
       {
         "name": "snapd",
@@ -13915,11 +13930,6 @@
       {
         "name": "snapd-desktop-integration",
         "version": "0.9",
-        "channel": "315"
-      },
-      {
-        "name": "zoom",
-        "version": "latest",
         "channel": "stable"
       }
     ],

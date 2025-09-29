@@ -42,21 +42,39 @@ configure_shortcuts() {
     # Run commands as the target user using sudo
     local -r run_as_user="sudo -u $username";
     
-    # Set up the custom keybinding paths
+    # Set up the custom keybinding paths (including Super+C for Diodon)
     log_info "Setting up custom keybinding paths...";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/']";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/', '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom2/']";
     
     # Configure Super+R for Run Dialog
     log_info "Configuring Super+R for Run Dialog...";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ name "Run Dialog";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ command "gnome-terminal -- bash -c 'read -p \"Command: \" cmd && eval \$cmd; read -p \"Press Enter to close...\"'";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ binding "<Super>r";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ name "Run Dialog";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ command "gnome-terminal -- bash -c 'read -p \"Command: \" cmd && eval \$cmd; read -p \"Press Enter to close...\"'";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ binding "<Super>r";
     
     # Configure Super+E for Nautilus File Manager
     log_info "Configuring Super+E for Nautilus...";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/ name "Nautilus File Manager";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/ command "nautilus";
-    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/ binding "<Super>e";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/ name "Nautilus File Manager";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/ command "nautilus";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/ binding "<Super>e";
+    
+    # Configure Super+C for Diodon Clipboard Manager
+    log_info "Configuring Super+C for Diodon Clipboard Manager...";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom2/ name "Diodon Clipboard Manager";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom2/ command "diodon";
+    $run_as_user gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybindings:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom2/ binding "<Super>c";
+    
+    # Configure screenshot keybinding: Shift+Super+S for screenshot UI
+    log_info "Configuring Shift+Super+S for Screenshot UI...";
+    $run_as_user gsettings set org.gnome.shell.keybindings show-screenshot-ui "['Print', '<Shift><Super>s']";
+    
+    # Disable window tiling keybindings (as configured in old system)
+    log_info "Disabling window tiling shortcuts...";
+    $run_as_user gsettings set org.gnome.mutter.keybindings toggle-tiled-left "[]";
+    $run_as_user gsettings set org.gnome.mutter.keybindings toggle-tiled-right "[]";
+    
+    # Set edge-tiling to false (from old system config)
+    $run_as_user gsettings set org.gnome.mutter edge-tiling false;
     
     log_success "Keyboard shortcuts configured successfully";
     log_info "  • Super+R: Run Dialog (terminal-based command prompt)";
