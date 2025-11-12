@@ -400,6 +400,57 @@ class UbuntuSystemScanner:
         print( f"    ✅ Found {len(ssh_items)} SSH items" );
         return ssh_items;
     
+    def scan_ssl_private_keys( self ) -> List[Dict[str, str]]:
+        """Scan SSL private keys from /etc/ssl/private/."""
+        print( "  🔍 Scanning SSL private keys..." );
+        ssl_items = [];
+        
+        ssl_private_dir = Path( '/etc/ssl/private' );
+        if not ssl_private_dir.exists():
+            print( "    ⚠️  /etc/ssl/private/ directory not found" );
+            return [];
+        
+        try:
+            # List all .key files in the directory (requires sudo)
+            result = subprocess.run(
+                ['sudo', 'ls', '-1', str( ssl_private_dir )],
+                capture_output=True, text=True
+            );
+            
+            if result.returncode != 0:
+                print( "    ⚠️  Cannot access /etc/ssl/private/ (requires sudo)" );
+                return [];
+            
+            key_files = [f for f in result.stdout.strip().split( '\n' ) if f and f.endswith( '.key' )];
+            
+            for key_file in key_files:
+                key_path = ssl_private_dir / key_file;
+                
+                try:
+                    # Get file permissions
+                    stat_result = subprocess.run(
+                        ['sudo', 'stat', '-c', '%a', str( key_path )],
+                        capture_output=True, text=True
+                    );
+                    permissions = stat_result.stdout.strip() if stat_result.returncode == 0 else '600';
+                    
+                    # Note existence without reading content (will be encrypted separately)
+                    ssl_items.append({
+                        'path': str( key_path ),
+                        'content': '[SSL_PRIVATE_KEY_EXISTS]',
+                        'permissions': permissions,
+                        'filename': key_file
+                    });
+                    
+                except Exception as e:
+                    print( f"    ⚠️  Error processing {key_file}: {e}" );
+        
+        except Exception as e:
+            print( f"    ⚠️  Error scanning SSL private keys: {e}" );
+        
+        print( f"    ✅ Found {len(ssl_items)} SSL private keys" );
+        return ssl_items;
+    
     def scan_cron_jobs( self ) -> List[str]:
         """Scan user crontab entries."""
         print( "  🔍 Scanning cron jobs..." );
@@ -511,17 +562,33 @@ class UbuntuSystemScanner:
         bashrc_safe, bashrc_sensitive = self.scan_bashrc_customizations();
         sysctl_settings = self.scan_sysctl_settings();
         ssh_keys = self.scan_ssh_keys();
+        ssl_keys = self.scan_ssl_private_keys();
         cron_jobs = self.scan_cron_jobs();
         keyboard_shortcuts = self.scan_keyboard_shortcuts();
         
         # Handle sensitive data encryption
         encrypted_refs = [];
+        ssl_key_paths = [];
+        
         if encrypt_sensitive and bashrc_sensitive:
             print( "  🔐 Encrypting sensitive data..." );
             password = prompt_for_password( "system inventory encryption" );
             
             sensitive_values = { k: v['value'] for k, v in bashrc_sensitive.items() };
-            self.sensitive_data = self.crypto.encrypt_dict( sensitive_values, password );
+            
+            # Collect SSL private key paths for encryption
+            if ssl_keys:
+                for ssl_key_info in ssl_keys:
+                    key_path = ssl_key_info.get( 'path' );
+                    if key_path and 'snakeoil' not in key_path:
+                        ssl_key_paths.append( key_path );
+            
+            # Encrypt both environment variables and SSL key files
+            self.sensitive_data = self.crypto.encrypt_dict( 
+                sensitive_values, 
+                password, 
+                file_paths=ssl_key_paths 
+            );
             encrypted_refs = list( bashrc_sensitive.keys() );
         
         # Build complete inventory
@@ -542,7 +609,8 @@ class UbuntuSystemScanner:
                 'keyboard_shortcuts': keyboard_shortcuts
             },
             'files': {
-                'ssh_keys': ssh_keys
+                'ssh_keys': ssh_keys,
+                'ssl_private_keys': ssl_keys
             },
             'encrypted_refs': encrypted_refs
         };
@@ -589,6 +657,7 @@ def main():
     print( f"   Python packages: {len(inventory['packages']['python'])}" );
     print( f"   Custom services: {len(inventory['custom_services'])}" );
     print( f"   SSH keys: {len(inventory['files']['ssh_keys'])}" );
+    print( f"   SSL private keys: {len(inventory['files']['ssl_private_keys'])}" );
     print( f"   Cron jobs: {len(inventory['system_config']['cron_jobs'])}" );
     print( f"   Keyboard shortcuts: {len(inventory['system_config']['keyboard_shortcuts'])}" );
     print( f"   Encrypted secrets: {len(inventory['encrypted_refs'])}" );
