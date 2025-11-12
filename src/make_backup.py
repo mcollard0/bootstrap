@@ -203,14 +203,43 @@ class BootstrapBackupManager:
         
         # Define important files to backup
         important_files = [
+            # Core Python source files
             self.project_root / 'src' / 'crypto_utils.py',
             self.project_root / 'src' / 'bootstrap_scanner.py', 
             self.project_root / 'src' / 'generate_bootstrap.py',
             self.project_root / 'src' / 'make_backup.py',
+            
+            # Critical scripts
             self.project_root / 'scripts' / 'bootstrap.sh',
-            self.project_root / 'docs' / 'architecture.md',
+            self.project_root / 'scripts' / 'add_secret.py',
+            self.project_root / 'scripts' / 'decrypt_secrets.py',
+            self.project_root / 'scripts' / 'git_auto_push.sh',
+            self.project_root / 'scripts' / 'setup_cron.sh',
+            self.project_root / 'scripts' / 'preview_ssl_keys.py',
+            self.project_root / 'scripts' / 'serve_bootstrap.py',
+            self.project_root / 'scripts' / 'configure_display_server.sh',
+            self.project_root / 'scripts' / 'configure_keyboard_shortcuts.sh',
+            self.project_root / 'scripts' / 'warp_reinstall.sh',
+            self.project_root / 'scripts' / 'install_0xproto_font.sh',
+            
+            # Data files (critical!)
             self.project_root / 'data' / 'inventory.json',
-            self.project_root / 'data' / 'encrypted_secrets.json'
+            self.project_root / 'data' / 'encrypted_secrets.json',
+            self.project_root / 'data' / 'encrypted_secrets.example.json',
+            
+            # Documentation
+            self.project_root / 'docs' / 'architecture.md',
+            self.project_root / 'docs' / 'CONTRIBUTING.md',
+            self.project_root / 'docs' / 'TESTING.md',
+            self.project_root / 'docs' / 'SSL_KEY_BACKUP.md',
+            
+            # Root documentation
+            self.project_root / 'README.md',
+            self.project_root / 'DISASTER_RECOVERY.md',
+            self.project_root / 'EMERGENCY_CARD.md',
+            self.project_root / 'SECRETS_SETUP.md',
+            self.project_root / 'VM_TESTING_INSTRUCTIONS.md',
+            self.project_root / 'VERIFICATION_SUMMARY.md',
         ];
         
         results = {};

@@ -81,10 +81,34 @@ class SecureBootstrapCrypto:
     
     def encrypt_file( self, path: str, password: str, **kwargs ) -> Dict[str, Any]:
         """Encrypt a file's bytes and return an object including path, mode, and optional flags."""
-        st = os.stat( path );
-        mode = oct( st.st_mode )[-3:];
-        with open( path, 'rb' ) as f:
-            data = f.read();
+        import subprocess;
+        import tempfile;
+        
+        # Try to read file directly first
+        try:
+            st = os.stat( path );
+            mode = oct( st.st_mode )[-3:];
+            with open( path, 'rb' ) as f:
+                data = f.read();
+        except PermissionError:
+            # File requires sudo access - use sudo to read it
+            try:
+                # Get file mode with sudo
+                stat_result = subprocess.run(
+                    ['sudo', 'stat', '-c', '%a', path],
+                    capture_output=True, text=True, check=True
+                );
+                mode = stat_result.stdout.strip();
+                
+                # Read file content with sudo
+                cat_result = subprocess.run(
+                    ['sudo', 'cat', path],
+                    capture_output=True, check=True
+                );
+                data = cat_result.stdout;
+            except subprocess.CalledProcessError as e:
+                raise PermissionError( f"Cannot read file {path} even with sudo: {e}" );
+        
         enc = self.encrypt_bytes( data, password );
         enc['path'] = path;
         enc['mode'] = mode;
