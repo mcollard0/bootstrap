@@ -1,9 +1,8 @@
 #!/bin/bash
 #
-# Ubuntu Bootstrap Restoration Script (CORRECTED VERSION)
-# Generated: 2025-09-08T10:56:28.863467
+# Ubuntu Bootstrap Restoration Script
+# Generated: 2025-11-16T21:17:11.279964
 # Source System: Ubuntu 25.04
-# Fixed: 2025-09-28 - Resolved apt-key deprecation and shell syntax issues
 # 
 # This script restores a complete Ubuntu system configuration including:
 # - Package installations (APT, Snap, Flatpak, Python)
@@ -11,7 +10,7 @@
 # - User environment (.bashrc, SSH keys, cron jobs)
 # - Encrypted sensitive data (API keys, credentials)
 #
-# Usage: sudo ./bootstrap_fixed.sh
+# Usage: sudo ./bootstrap.sh
 #
 
 set -euo pipefail;  # Exit on any error, undefined vars, pipe failures
@@ -33,10 +32,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; };
 check_sudo() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run with sudo privileges for system-level changes";
-        log_info "Usage: sudo ./bootstrap.sh [--start SECTION] [--step SECTION]";
-        log_info "  --start SECTION: Start from SECTION and run all subsequent sections";
-        log_info "  --step SECTION:  Run only the specified SECTION";
-        log_info "Available sections: System, Special, Display, Python, APT, Multimedia, Desktop, Snap, Sysctl, Bashrc, SSH, Git, Apps, Keyboard, Cron, Cleanup";
+        log_info "Usage: sudo ./bootstrap.sh";
         exit 1;
     fi;
 };
@@ -64,190 +60,10 @@ is_flatpak_installed() {
     flatpak list | grep -q "$1" 2>/dev/null;
 };
 
-# Find the latest version of a package with version numbers
-find_latest_package() {
-    local package_base="$1";  # e.g. "libx264", "libavcodec-extra"
-    local result;
-    
-    # Search for packages with version numbers (runtime libraries)
-    # Look for pattern like package_base-123
-    result=$(apt list 2>/dev/null | grep -E "^${package_base}-[0-9]+/" | 
-             head -1 | sed 's|/.*||');
-    
-    if [[ -n "$result" ]]; then
-        echo "$result";
-        return 0;
-    fi;
-    
-    # Fallback: search for any package starting with the base name
-    result=$(apt list 2>/dev/null | grep -E "^${package_base}[0-9]*" | 
-             sed 's|/.*||' | 
-             sort -V | 
-             tail -1);
-    
-    if [[ -n "$result" ]]; then
-        echo "$result";
-        return 0;
-    else
-        # Last fallback to exact package name
-        if apt list "$package_base" 2>/dev/null | grep -q "^${package_base}/"; then
-            echo "$package_base";
-            return 0;
-        fi;
-    fi;
-    
-    return 1;
-};
-
-# Extract APT packages from inventory.json
-get_inventory_apt_packages() {
-    local inventory_file="data/inventory.json";
-    
-    # Check if running from scripts directory and adjust path
-    if [[ "$(basename "$PWD")" == "scripts" ]]; then
-        inventory_file="../data/inventory.json";
-    fi;
-    local packages=();
-    
-    if [[ ! -f "$inventory_file" ]]; then
-        log_warning "inventory.json not found - using hardcoded package list";
-        return 1;
-    fi;
-    
-    # Ensure jq is available for JSON parsing
-    if ! command -v jq >/dev/null 2>&1; then
-        log_info "Installing jq for JSON parsing...";
-        apt install -y jq || {
-            log_warning "Failed to install jq - using hardcoded package list";
-            return 1;
-        };
-    fi;
-    
-    # Extract package names from inventory.json
-    mapfile -t packages < <(jq -r '.packages.apt[] | select(.status == "installed") | .name' "$inventory_file" 2>/dev/null || echo "");
-    
-    if [[ ${#packages[@]} -eq 0 ]]; then
-        log_warning "No packages found in inventory.json - using hardcoded list";
-        return 1;
-    fi;
-    
-    # Return packages via global variable
-    INVENTORY_PACKAGES=("${packages[@]}");
-    log_info "Found ${#packages[@]} packages in inventory.json";
-    return 0;
-};
-
-# Install package with automatic version detection
-install_latest_package() {
-    local package_base="$1";
-    local latest_pkg;
-    
-    if latest_pkg=$(find_latest_package "$package_base"); then
-        if ! is_apt_installed "$latest_pkg"; then
-            log_info "Installing latest version: $latest_pkg";
-            apt install -y "$latest_pkg" || log_warning "Failed to install $latest_pkg";
-        else
-            log_info "$latest_pkg already installed";
-        fi;
-    else
-        log_warning "No package found matching: $package_base";
-    fi;
-};
-
-# Post-step execution system - associative array to store scripts to run after steps
-declare -A POST_STEP_SCRIPTS;
-
-# Add script to run after a specific step
-add_post_step_script() {
-    local step="$1";
-    local script_path="$2";
-    if [[ -n "${POST_STEP_SCRIPTS[$step]:-}" ]]; then
-        POST_STEP_SCRIPTS[$step]="${POST_STEP_SCRIPTS[$step]};$script_path";
-    else
-        POST_STEP_SCRIPTS[$step]="$script_path";
-    fi;
-};
-
-# Execute post-step scripts for a given step
-run_post_step_scripts() {
-    local step="$1";
-    if [[ -n "${POST_STEP_SCRIPTS[$step]:-}" ]]; then
-        log_info "🔧 Running post-step scripts for [$step]...";
-        IFS=';' read -ra SCRIPTS <<< "${POST_STEP_SCRIPTS[$step]}";
-        for script in "${SCRIPTS[@]}"; do
-            if [[ -f "$script" ]]; then
-                log_info "Executing: $script";
-                chmod +x "$script";
-                if sudo -u "$TARGET_USER" BOOTSTRAP_SECRET="${BOOTSTRAP_SECRET:-}" bash "$script" "$TARGET_USER"; then
-                    log_success "Post-step script completed: $script";
-                else
-                    log_warning "Post-step script failed: $script";
-                fi;
-            else
-                log_warning "Post-step script not found: $script";
-            fi;
-        done;
-    fi;
-};
-
-# Parse command line arguments
-parse_args() {
-    START_SECTION="";
-    RUN_ONLY_SECTION="";
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --start)
-                START_SECTION="$2";
-                shift 2;
-                ;;
-            --step)
-                RUN_ONLY_SECTION="$2";
-                shift 2;
-                ;;
-            *)
-                log_error "Unknown argument: $1";
-                log_info "Usage: sudo ./bootstrap.sh [--start SECTION] [--step SECTION]";
-                log_info "  --start SECTION: Start from SECTION and run all subsequent sections";
-                log_info "  --step SECTION:  Run only the specified SECTION";
-                log_info "Available sections: System, Special, Display, Python, APT, Multimedia, Desktop, Snap, Sysctl, Bashrc, SSH, Git, Apps, Keyboard, Cron, Cleanup";
-                exit 1;
-                ;;
-        esac;
-    done;
-};
-
-# Check if we should skip to a specific section
-should_run_section() {
-    local section="$1";
-    
-    # If --step is specified, run only that specific section
-    if [[ -n "$RUN_ONLY_SECTION" ]]; then
-        if [[ "$RUN_ONLY_SECTION" == "$section" ]]; then
-            return 0;  # Run this section only
-        else
-            return 1;  # Skip all other sections
-        fi;
-    fi;
-    
-    # Original --start logic
-    if [[ -z "$START_SECTION" ]]; then
-        return 0;  # Run all sections
-    elif [[ "$START_SECTION" == "$section" ]]; then
-        START_SECTION="";  # Clear flag so subsequent sections run
-        return 0;  # Start running from this section
-    elif [[ -z "$START_SECTION" ]]; then
-        return 0;  # Continue running after start section
-    else
-        return 1;  # Skip this section
-    fi;
-};
-
 # Main restoration starts here
 main() {
-    parse_args "$@";
-    
-    log_info "🚀 Starting Ubuntu Bootstrap Restoration (FIXED VERSION)";
-    log_info "==========================================================";
+    log_info "🚀 Starting Ubuntu Bootstrap Restoration";
+    log_info "=========================================";
     
     check_sudo;
     readonly TARGET_USER=$(check_user);
@@ -255,125 +71,42 @@ main() {
     
     log_info "Target user: $TARGET_USER";
     log_info "User home: $USER_HOME";
-    if [[ -n "$START_SECTION" ]]; then
-        log_info "Starting from section: $START_SECTION";
-    fi;
-    if [[ -n "$RUN_ONLY_SECTION" ]]; then
-        log_info "Running only section: $RUN_ONLY_SECTION";
-    fi;
-    
-    # Register post-step scripts
-    if [[ -f "./configure_keyboard_shortcuts.sh" ]]; then
-        add_post_step_script "Keyboard" "./configure_keyboard_shortcuts.sh";
-        log_info "Registered keyboard shortcuts script for Keyboard step";
-    fi;
-    
-    # Register scripts from decrypted files
-    if [[ -f "./install_0xproto_font.sh" ]]; then
-        add_post_step_script "System" "./install_0xproto_font.sh";
-        log_info "Registered 0xProto Nerd Font installation script for System step";
-    fi;
-    
+    echo;
     # System preparation
-    if should_run_section "System"; then
-        log_info "📦 [System] Preparing system and updating package lists...";
-        apt update;
-    fi;
+    log_info "📦 Preparing system and updating package lists...";
+    apt update;
     
     # Install essential prerequisites
-    if should_run_section "System"; then
-        log_info "🔧 [System] Installing essential prerequisites...";
-        apt install -y curl wget gnupg software-properties-common apt-transport-https;
-        
-        # Run any registered post-step scripts for System
-        run_post_step_scripts "System";
+    log_info "🔧 Installing essential prerequisites...";
+    apt install -y curl wget gnupg software-properties-common apt-transport-https;
+    
+    # Remove Firefox if installed (as requested)
+    log_info "🦊 Checking Firefox installation...";
+    if is_snap_installed "firefox"; then
+        log_warning "Removing Firefox snap package...";
+        snap remove firefox;
+        log_success "Firefox snap removed";
     fi;
     
-    # Restore encrypted secrets EARLY (before any sections that might need them)
-    log_info "🔐 Restoring encrypted secrets and files...";
-    
-    # Backup existing .bashrc with timestamp
-    BASHRC_BACKUP="$USER_HOME/.bashrc.$(date -Iseconds)";
-    if [[ -f "$USER_HOME/.bashrc" ]]; then
-        cp "$USER_HOME/.bashrc" "$BASHRC_BACKUP";
-        chown "$TARGET_USER:$TARGET_USER" "$BASHRC_BACKUP";
-        log_info "Created .bashrc backup at $BASHRC_BACKUP";
+    if is_apt_installed "firefox"; then
+        log_warning "Removing Firefox APT package...";
+        apt remove --purge -y firefox firefox-esr;
+        apt autoremove -y;
+        log_success "Firefox APT package removed";
     fi;
-    
-    # Check if encrypted secrets file exists
-    if [[ -f "../data/encrypted_secrets.json" ]]; then
-        # Install required Python packages for decryption (system-wide)
-        log_info "Installing cryptography packages for secret decryption...";
-        apt install -y python3-cryptography python3-argon2 || {
-            log_warning "Failed to install cryptography packages - skipping secrets restoration";
-        };
-        
-        if command -v python3 >/dev/null && python3 -c "import cryptography, argon2" 2>/dev/null; then
-            log_success "Cryptography packages installed";
-            
-            # Attempt to decrypt and append secrets to .bashrc, and restore files
-            log_info "Please enter your master password to decrypt environment variables and files...";
-            if sudo -u "$TARGET_USER" BOOTSTRAP_SECRET="${BOOTSTRAP_SECRET:-}" python3 "./decrypt_secrets.py" --restore-files >> "$USER_HOME/.bashrc.temp" 2>"$USER_HOME/.secrets_restore.log"; then
-                # Add a separator comment
-                echo '' >> "$USER_HOME/.bashrc";
-                echo '# Environment variables restored from encrypted secrets' >> "$USER_HOME/.bashrc";
-                cat "$USER_HOME/.bashrc.temp" >> "$USER_HOME/.bashrc";
-                rm "$USER_HOME/.bashrc.temp";
-                chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.bashrc";
-                log_success "Encrypted environment variables and files restored";
-                
-                # Show what files were restored
-                if [[ -f "$USER_HOME/.secrets_restore.log" ]]; then
-                    while IFS= read -r line; do
-                        if [[ "$line" == *"Restored file:"* ]]; then
-                            log_info "$line";
-                        fi;
-                    done < "$USER_HOME/.secrets_restore.log";
-                    rm "$USER_HOME/.secrets_restore.log";
-                fi;
-                
-                # Source .bashrc to load new environment variables for the current session
-                log_info "Loading updated environment variables...";
-                sudo -u "$TARGET_USER" bash -c "source '$USER_HOME/.bashrc'" || true;
-                
-                # Export environment variables to current shell session
-                if [[ -f "$USER_HOME/.bashrc" ]]; then
-                    set +u;  # Temporarily allow undefined variables
-                    while IFS= read -r line; do
-                        if [[ "$line" =~ ^export\ ([^=]+)= ]]; then
-                            var_name="${BASH_REMATCH[1]}";
-                            # Extract and export the variable
-                            eval "$line" 2>/dev/null || true;
-                        fi;
-                    done < "$USER_HOME/.bashrc";
-                    set -u;  # Re-enable undefined variable checking
-                fi;
-            else
-                rm -f "$USER_HOME/.bashrc.temp" "$USER_HOME/.secrets_restore.log";
-                log_warning "Failed to decrypt secrets - continuing without encrypted secrets";
-            fi;
-        else
-            log_warning "Cryptography packages not available - skipping secrets restoration";
-        fi;
-    else
-        log_warning "No encrypted secrets file found - skipping secrets restoration";
-    fi;
-    
     
     # Install and configure Flatpak
-    if should_run_section "System"; then
-        log_info "📦 [System] Setting up Flatpak...";
-        if ! command -v flatpak >/dev/null 2>&1; then
-            log_info "Installing Flatpak...";
-            apt install -y flatpak;
-            
-            # Add Flathub repository
-            log_info "Adding Flathub repository...";
-            flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo;
-            log_success "Flatpak installed and configured";
-        else
-            log_info "Flatpak already installed";
-        fi;
+    log_info "📦 Setting up Flatpak...";
+    if ! command -v flatpak >/dev/null 2>&1; then
+        log_info "Installing Flatpak...";
+        apt install -y flatpak;
+        
+        # Add Flathub repository
+        log_info "Adding Flathub repository...";
+        flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo;
+        log_success "Flatpak installed and configured";
+    else
+        log_info "Flatpak already installed";
     fi;
     
     # Disable Intel KVM virtualization modules
@@ -398,30 +131,17 @@ EOF
     fi;
     
     # Update initramfs to ensure changes persist
-    # Update initramfs only if blacklist config is newer than current initramfs
-    CURRENT_KERNEL=$(uname -r);
-    INITRAMFS_FILE="/boot/initrd.img-$CURRENT_KERNEL";
-    BLACKLIST_CONFIG="/etc/modprobe.d/blacklist-intel-kvm.conf";
-    
-    if [[ ! -f "$INITRAMFS_FILE" ]] || [[ "$BLACKLIST_CONFIG" -nt "$INITRAMFS_FILE" ]]; then
-        log_info "Updating initramfs (blacklist config is newer or initramfs missing)...";
-        update-initramfs -u;
-        log_success "Initramfs updated with KVM blacklist";
-    else
-        log_info "Initramfs already up-to-date with KVM blacklist - skipping regeneration";
-    fi;
+    update-initramfs -u;
     log_success "Intel KVM modules disabled";
     
     # Install special packages with custom repositories
-    if should_run_section "Special"; then
-        log_info "🌟 [Special] Installing special packages...";
-    fi;
+    log_info "🌟 Installing special packages...";
     
-    # Google Chrome - FIXED: Use modern keyring approach instead of deprecated apt-key
-    if should_run_section "Special" && ! is_apt_installed "google-chrome-stable"; then
+    # Google Chrome
+    if ! is_apt_installed "google-chrome-stable"; then
         log_info "Installing Google Chrome...";
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg;
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list;
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -;
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list;
         apt update;
         apt install -y google-chrome-stable;
         log_success "Google Chrome installed";
@@ -429,11 +149,11 @@ EOF
         log_info "Google Chrome already installed";
     fi;
     
-    # Warp Terminal (preview version) - Already using correct modern approach
-    if should_run_section "Special" && ! is_apt_installed "warp-terminal-preview"; then
+    # Warp Terminal (preview version)
+    if ! is_apt_installed "warp-terminal-preview"; then
         log_info "Installing Warp Terminal...";
         curl -fsSL https://releases.warp.dev/linux/keys/warp.asc | gpg --dearmor -o /usr/share/keyrings/warp.gpg;
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb preview main" > /etc/apt/sources.list.d/warp.list;
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb stable main" > /etc/apt/sources.list.d/warp.list;
         apt update;
         apt install -y warp-terminal-preview;
         log_success "Warp Terminal installed";
@@ -441,8 +161,8 @@ EOF
         log_info "Warp Terminal already installed";
     fi;
     
-    # Docker - Already using correct modern approach
-    if should_run_section "Special" && ! is_apt_installed "docker-ce"; then
+    # Docker
+    if ! is_apt_installed "docker-ce"; then
         log_info "Installing Docker...";
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg;
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list;
@@ -457,7 +177,7 @@ EOF
     fi;
     
     # VirtualBox
-    if should_run_section "Special" && ! is_apt_installed "virtualbox"; then
+    if ! is_apt_installed "virtualbox"; then
         log_info "Installing VirtualBox...";
         apt install -y virtualbox virtualbox-ext-pack;
         log_success "VirtualBox installed";
@@ -465,713 +185,91 @@ EOF
         log_info "VirtualBox already installed";
     fi;
     
-    # Configure display server for optimal compatibility
-    if should_run_section "Display"; then
-        log_info "🖥️  [Display] Configuring display server for optimal compatibility...";
-    fi;
+    # Install APT packages\n    log_info "📦 Installing APT packages...";\n\n    # Batch 1\n    apt install -y 1password 7zip accountsservice acl adduser adwaita-icon-theme alsa-base alsa-topology-conf alsa-ucm-conf alsa-utils amd64-microcode anacron apg apparmor appflowy apport apport-core-dump-handler apport-gtk apport-symptoms appstream appstream-compose apt apt-config-icons apt-config-icons-hidpi apt-transport-https apt-utils aptdaemon aptdaemon-data aspell aspell-en at-spi2-common at-spi2-core autoconf automake autopoint autotools-dev avahi-daemon awscli baobab base-files base-passwd bash bash-completion bc beekeeper-studio bind9-dnsutils bind9-host bind9-libs:amd64 binutils binutils-common:amd64;\n\n    # Batch 2\n    apt install -y binutils-x86-64-linux-gnu blt bluez bluez-cups bluez-obexd bolt bpfcc-tools bpftool bpftrace brltty bsdextrautils bsdutils bubblewrap build-essential busybox-initramfs busybox-static bzip2 bzip2-doc ca-certificates ca-certificates-java cabextract caca-utils calibre calibre-bin certbot chafa chromium-browser cloud-guest-utils cloud-init cloud-init-base cloudflared cmake cmake-data code-insiders colord colord-data command-not-found console-setup console-setup-linux coreutils cpdb-backend-cups cpio cpp cpp-12 cpp-14 cpp-14-x86-64-linux-gnu cpp-x86-64-linux-gnu cpu-checker cpu-x cracklib-runtime;\n\n    # Batch 3\n    apt install -y crash cron cron-daemon-common cuda-cccl-13-0 cuda-command-line-tools-13-0 cuda-compiler-13-0 cuda-crt-13-0 cuda-cudart-13-0 cuda-cudart-dev-13-0 cuda-culibos-dev-13-0 cuda-cuobjdump-13-0 cuda-cupti-13-0 cuda-cupti-dev-13-0 cuda-cuxxfilt-13-0 cuda-documentation-13-0 cuda-driver-dev-13-0 cuda-gdb-13-0 cuda-libraries-13-0 cuda-libraries-dev-13-0 cuda-nsight-13-0 cuda-nsight-compute-13-0 cuda-nsight-systems-13-0 cuda-nvcc-13-0 cuda-nvdisasm-13-0 cuda-nvml-dev-13-0 cuda-nvprune-13-0 cuda-nvrtc-13-0 cuda-nvrtc-dev-13-0 cuda-nvtx-13-0 cuda-opencl-13-0 cuda-profiler-api-13-0 cuda-repo-ubuntu2404-13-0-local cuda-sandbox-dev-13-0 cuda-sanitizer-13-0 cuda-toolkit-13-0 cuda-toolkit-13-0-config-common cuda-toolkit-13-config-common cuda-toolkit-config-common cuda-tools-13-0 cuda-visual-tools-13-0 cups cups-browsed cups-bsd cups-client cups-common cups-core-drivers cups-daemon cups-filters cups-filters-core-drivers cups-ipp-utils;\n\n    # Batch 4\n    apt install -y cups-pk-helper cups-ppdc cups-server-common curl cython3 dash dbus dbus-bin dbus-daemon dbus-session-bus-common dbus-system-bus-common dbus-user-session dbus-x11 dc dcmtk dcmtk-data dconf-cli dconf-editor dconf-gsettings-backend:amd64 dconf-service debconf debconf-i18n debhelper debianutils debugedit default-jre default-jre-headless deja-dup desktop-file-utils dh-autoreconf dh-strip-nondeterminism dhcpcd-base dictionaries-common diffutils diodon dirmngr distro-info distro-info-data dkms dmeventd dmidecode dmsetup dmz-cursor-theme dns-root-data dnsmasq-base docbook-xml docker-buildx-plugin docker-compose-plugin docutils-common dosfstools;\n\n    # Batch 5\n    apt install -y dpkg dpkg-dev dracut-install duplicity dwz e2fsprogs e2fsprogs-l10n eatmydata ebook2epub ed efibootmgr eject elfutils emacsen-common enchant-2 eog eslint espeak-ng-data:amd64 ethtool evolution-data-server evolution-data-server-common exfatprogs expect extundelete faac faad fakeroot fdisk feh ffmpeg file file-roller findutils fio firmware-sof-signed flac flatpak flatpak-builder fontconfig fontconfig-config fonts-dejavu-core fonts-dejavu-extra fonts-dejavu-mono fonts-droid-fallback fonts-font-awesome fonts-freefont-ttf fonts-lato fonts-liberation fonts-liberation-sans-narrow fonts-lyx;\n\n    # Batch 6\n    apt install -y fonts-mathjax fonts-noto-cjk fonts-noto-color-emoji fonts-noto-core fonts-noto-mono fonts-opensymbol fonts-ubuntu fonts-urw-base35 foomatic-db-compressed-ppds fprintd friendly-recovery ftp fuse fuse3 fwupd fwupd-signed g++ g++-14 g++-14-x86-64-linux-gnu g++-x86-64-linux-gnu gamemode gamemode-daemon gawk gcc gcc-12 gcc-12-base:amd64 gcc-14 gcc-14-base:amd64 gcc-14-x86-64-linux-gnu gcc-15-base:amd64 gcc-15-base:i386 gcc-x86-64-linux-gnu gcr gcr4 gdb gdisk gdm3 gds-tools-13-0 geoclue-2.0 geocode-glib-common gettext gettext-base ghostscript ghostwriter gimp gimp-data gir1.2-accountsservice-1.0:amd64 gir1.2-adw-1:amd64 gir1.2-atk-1.0:amd64 gir1.2-atspi-2.0:amd64;\n\n    # Batch 7\n    apt install -y gir1.2-babl-0.1:amd64 gir1.2-dbusmenu-glib-0.4:amd64 gir1.2-dee-1.0:amd64 gir1.2-flatpak-1.0:amd64 gir1.2-freedesktop:amd64 gir1.2-gck-2:amd64 gir1.2-gcr-4:amd64 gir1.2-gdesktopenums-3.0:amd64 gir1.2-gdkpixbuf-2.0:amd64 gir1.2-gdm-1.0 gir1.2-gegl-0.4:amd64 gir1.2-geoclue-2.0:amd64 gir1.2-gimp-3.0:amd64 gir1.2-girepository-2.0:amd64 gir1.2-glib-2.0:amd64 gir1.2-gmenu-3.0:amd64 gir1.2-gnomeautoar-0.1:amd64 gir1.2-gnomebg-4.0:amd64 gir1.2-gnomebluetooth-3.0:amd64 gir1.2-gnomedesktop-3.0:amd64 gir1.2-gnomedesktop-4.0:amd64 gir1.2-graphene-1.0:amd64 gir1.2-gst-plugins-bad-1.0:amd64 gir1.2-gst-plugins-base-1.0:amd64 gir1.2-gstreamer-1.0:amd64 gir1.2-gtk-3.0:amd64 gir1.2-gtk-4.0:amd64 gir1.2-gudev-1.0:amd64 gir1.2-gweather-4.0:amd64 gir1.2-handy-1:amd64 gir1.2-harfbuzz-0.0:amd64 gir1.2-ibus-1.0:amd64 gir1.2-javascriptcoregtk-4.1:amd64 gir1.2-mutter-16:amd64 gir1.2-nm-1.0:amd64 gir1.2-nma4-1.0:amd64 gir1.2-notify-0.7:amd64 gir1.2-packagekitglib-1.0 gir1.2-pango-1.0:amd64 gir1.2-peas-1.0:amd64 gir1.2-polkit-1.0 gir1.2-rb-3.0:amd64 gir1.2-rsvg-2.0:amd64 gir1.2-secret-1:amd64 gir1.2-snapd-2:amd64 gir1.2-soup-3.0:amd64 gir1.2-totem-1.0:amd64 gir1.2-totemplparser-1.0:amd64 gir1.2-udisks-2.0:amd64 gir1.2-unity-7.0:amd64;\n\n    # Batch 8\n    apt install -y gir1.2-upowerglib-1.0:amd64 gir1.2-vte-2.91:amd64 gir1.2-webkit2-4.1:amd64 gir1.2-wnck-3.0:amd64 girepository-tools:amd64 git git-man gjs glib-networking:amd64 glib-networking-common glib-networking-services gnome-accessibility-themes gnome-bluetooth-3-common gnome-bluetooth-sendto gnome-calculator gnome-calendar gnome-characters gnome-clocks gnome-control-center gnome-control-center-data gnome-control-center-faces gnome-desktop3-data gnome-disk-utility gnome-font-viewer gnome-initial-setup gnome-keyring gnome-keyring-pkcs11:amd64 gnome-logs gnome-menus gnome-online-accounts gnome-power-manager gnome-remote-desktop gnome-session-bin gnome-session-canberra gnome-session-common gnome-settings-daemon gnome-settings-daemon-common gnome-shell gnome-shell-common gnome-shell-extension-appindicator gnome-shell-extension-desktop-icons-ng gnome-shell-extension-ubuntu-dock gnome-shell-extension-ubuntu-tiling-assistant gnome-snapshot gnome-sound-recorder gnome-startup-applications gnome-system-monitor gnome-terminal gnome-terminal-data gnome-text-editor;\n\n    # Batch 9\n    apt install -y gnome-themes-extra:amd64 gnome-themes-extra-data gnome-user-docs gnupg gnupg-l10n gnupg-utils gnupg2 golang-1.24-go golang-1.24-src golang-go:amd64 golang-src gpg gpg-agent gpg-wks-client gpgconf gpgsm gpgv graphviz grep grilo-plugins-0.3-base:amd64 groff-base grub-common grub-efi-amd64 grub-efi-amd64-bin grub-efi-amd64-signed grub-efi-amd64-unsigned grub-pc-bin grub2-common gsettings-desktop-schemas gsettings-ubuntu-schemas gstreamer1.0-alsa:amd64 gstreamer1.0-gl:amd64 gstreamer1.0-gtk3:amd64 gstreamer1.0-libav:amd64 gstreamer1.0-libcamera:amd64 gstreamer1.0-packagekit gstreamer1.0-pipewire:amd64 gstreamer1.0-plugins-bad:amd64 gstreamer1.0-plugins-base:amd64 gstreamer1.0-plugins-base-apps gstreamer1.0-plugins-good:amd64 gstreamer1.0-plugins-ugly:amd64 gstreamer1.0-tools gstreamer1.0-vaapi:amd64 gstreamer1.0-x:amd64 gtk-update-icon-cache gtk2-engines-murrine:amd64 gtk2-engines-pixbuf:amd64 gvfs:amd64 gvfs-backends;\n\n    # Batch 10\n    apt install -y gvfs-common gvfs-daemons gvfs-fuse gvfs-libs:amd64 gyp gzip handlebars hdparm heif-gdk-pixbuf:amd64 heif-thumbnailer hicolor-icon-theme hostname hplip hplip-data htop hunspell-en-au hunspell-en-ca hunspell-en-gb hunspell-en-us hunspell-en-za hunspell-fr-classical hwdata hyphen-en-ca hyphen-en-gb hyphen-en-us i2c-tools i7z ibus ibus-data ibus-gtk:amd64 ibus-gtk3:amd64 ibus-gtk4:amd64 ibus-table ibus-table-cangjie-big ibus-table-cangjie3 ibus-table-cangjie5 ibverbs-providers:amd64 ieee-data iio-sensor-proxy im-config imagemagick imagemagick-7-common imagemagick-7.q16 inetutils-telnet info init init-system-helpers initramfs-tools initramfs-tools-bin initramfs-tools-core;\n\n    # Batch 11\n    apt install -y inputattach install-info intel-microcode intltool-debian ipp-usb iproute2 iptables iputils-ping iputils-tracepath ipxe-qemu ipxe-qemu-256k-compat-efi-roms isa-support:amd64 iso-codes isympy-common isympy3 iucode-tool iw java-common javascript-common jp2a jq kbd kdiskmark kdump-tools kexec-tools keyboard-configuration keyboxd klibc-utils kmod krb5-locales lame language-pack-en language-pack-en-base language-pack-gnome-en language-pack-gnome-en-base language-selector-common language-selector-gnome laptop-detect ldap-utils less liba52-0.7.4:amd64 libaa1:amd64 libaacs0:amd64 libabsl20230802:amd64 libabw-0.1-1:amd64 libaccountsservice0:amd64 libacl1:amd64 libadwaita-1-0:amd64 libaio1t64:amd64 libalgorithm-diff-perl;\n\n    # Batch 12\n    apt install -y libalgorithm-diff-xs-perl libalgorithm-merge-perl libamd3:amd64 libann0 libao-common libao4:amd64 libaom3:amd64 libapparmor1:amd64 libappstream-compose0:amd64 libappstream-glib8:amd64 libappstream5:amd64 libapr1t64:amd64 libaprutil1t64:amd64 libapt-pkg7.0:amd64 libarchive-cpio-perl libarchive-zip-perl libarchive13t64:amd64 libargon2-1:amd64 libaribb24-0t64:amd64 libasan8:amd64 libasm1t64:amd64 libasound2-data libasound2t64:amd64 libaspell15:amd64 libass9:amd64 libassuan9:amd64 libasyncns0:amd64 libatasmart4:amd64 libatk-adaptor:amd64 libatk-bridge2.0-0t64:amd64 libatk-wrapper-java libatk-wrapper-java-jni:amd64 libatk1.0-0t64:amd64 libatkmm-1.6-1v5:amd64 libatomic1:amd64 libatomic1:i386 libatopology2t64:amd64 libatspi2.0-0t64:amd64 libattr1:amd64 libaudit-common libaudit1:amd64 libauthen-sasl-perl libavahi-client3:amd64 libavahi-common-data:amd64 libavahi-common3:amd64 libavahi-core7:amd64 libavahi-glib1:amd64 libavahi-ui-gtk3-0:amd64 libavc1394-0:amd64 libavcodec-dev:amd64;\n\n    # Batch 13\n    apt install -y libavcodec-extra:amd64 libavcodec-extra61:amd64 libavdevice-dev:amd64 libavdevice61:amd64 libavfilter-dev:amd64 libavfilter10:amd64 libavformat-dev:amd64 libavformat-extra61:amd64 libavif16:amd64 libavtp0:amd64 libavutil-dev:amd64 libavutil59:amd64 libayatana-appindicator3-1 libayatana-ido3-0.4-0:amd64 libayatana-indicator3-7:amd64 libb2-1:amd64 libbabeltrace1:amd64 libbabl-0.1-0:amd64 libbasicobjects0t64:amd64 libbdplus0:amd64 libbinutils:amd64 libblas3:amd64 libblkid-dev:amd64 libblkid1:amd64 libblockdev-crypto3:amd64 libblockdev-fs3:amd64 libblockdev-loop3:amd64 libblockdev-mdraid3:amd64 libblockdev-nvme3:amd64 libblockdev-part3:amd64 libblockdev-swap3:amd64 libblockdev-utils3:amd64 libblockdev3:amd64 libbluetooth3:amd64 libbluray2:amd64 libboost-iostreams1.83.0:amd64 libboost-locale1.83.0:amd64 libboost-thread1.83.0:amd64 libbpf1:amd64 libbpfcc:amd64 libbrlapi0.8:amd64 libbrotli-dev:amd64 libbrotli1:amd64 libbs2b0:amd64 libbsd0:amd64 libbsd0:i386 libburn4t64:amd64 libbytesize-common libbytesize1:amd64 libbz2-1.0:amd64;\n\n    # Batch 14\n    apt install -y libbz2-dev:amd64 libc-bin libc-dev-bin libc6:amd64 libc6:i386 libc6-dbg:amd64 libc6-dev:amd64 libcaca0:amd64 libcacard0:amd64 libcairo-gobject-perl libcairo-gobject2:amd64 libcairo-perl libcairo-script-interpreter2:amd64 libcairo2:amd64 libcairomm-1.0-1v5:amd64 libcairomm-1.16-1:amd64 libcamd3:amd64 libcamel-1.2-64t64:amd64 libcamera-ipa:amd64 libcamera0.4:amd64 libcanberra-gtk3-0:amd64 libcanberra-gtk3-module:amd64 libcanberra-pulse:amd64 libcanberra0:amd64 libcap-dev:amd64 libcap-ng0:amd64 libcap2:amd64 libcap2-bin libcares2:amd64 libcbor0.10:amd64 libcc1-0:amd64 libccolamd3:amd64 libcddb2 libcdio-cdda2t64:amd64 libcdio-paranoia2t64:amd64 libcdio19t64:amd64 libcdparanoia0:amd64 libcdr-0.1-1:amd64 libcdt5:amd64 libcfitsio10t64:amd64 libcgraph6:amd64 libchafa0t64:amd64 libchewing3:amd64 libchewing3-data libchm1 libcholmod5:amd64 libchromaprint1:amd64 libcjson1:amd64 libclang-cpp18 libclang-cpp20;\n\n    # Batch 15\n    apt install -y libclang1-19 libclang1-20 libclone-perl:amd64 libclucene-contribs1t64:amd64 libclucene-core1t64:amd64 libcmark-gfm-extensions0.29.0.gfm.13:amd64 libcmark-gfm0.29.0.gfm.13:amd64 libcodec2-1.2:amd64 libcolamd3:amd64 libcollection4t64:amd64 libcolord-gtk4-1t64:amd64 libcolord2:amd64 libcolorhug2:amd64 libcom-err2:amd64 libcpdb-frontend2t64:amd64 libcpdb2t64:amd64 libcpuid17:amd64 libcpuinfo0:amd64 libcrack2:amd64 libcrypt-dev:amd64 libcrypt1:amd64 libcryptsetup12:amd64 libctf-nobfd0:amd64 libctf0:amd64 libcublas-13-0 libcublas-dev-13-0 libcue2:amd64 libcufft-13-0 libcufft-dev-13-0 libcufile-13-0 libcufile-dev-13-0 libcups2t64:amd64 libcupsfilters2-common libcupsfilters2t64:amd64 libcupsimage2t64:amd64 libcurand-13-0 libcurand-dev-13-0 libcurl3t64-gnutls:amd64 libcurl4t64:amd64 libcusolver-13-0 libcusolver-dev-13-0 libcusparse-13-0 libcusparse-dev-13-0 libdaemon0:amd64 libdata-dump-perl libdatrie1:amd64 libdav1d7:amd64 libdaxctl1:amd64 libdb5.3t64:amd64 libdbus-1-3:amd64;\n\n    # Batch 16\n    apt install -y libdbusmenu-glib4:amd64 libdbusmenu-gtk3-4:amd64 libdc1394-25:amd64 libdca0:amd64 libdcmtk19:amd64 libdconf1:amd64 libde265-0:amd64 libdebconfclient0:amd64 libdebhelper-perl libdebuginfod-common libdebuginfod1t64:amd64 libdecor-0-0:amd64 libdecor-0-plugin-1-gtk:amd64 libdee-1.0-4:amd64 libdeflate0:amd64 libdevmapper-event1.02.1:amd64 libdevmapper1.02.1:amd64 libdex-1-1:amd64 libdhash1t64:amd64 libdiodon0:amd64 libdisplay-info2:amd64 libdjvulibre-text libdjvulibre21:amd64 libdmapsharing-4.0-3t64:amd64 libdnnl3.6:amd64 libdotconf0:amd64 libdouble-conversion3:amd64 libdpkg-perl libdrm-amdgpu1:amd64 libdrm-amdgpu1:i386 libdrm-common libdrm-intel1:amd64 libdrm-intel1:i386 libdrm-nouveau2:amd64 libdrm-radeon1:amd64 libdrm2:amd64 libdrm2:i386 libduktape207:amd64 libdv4t64:amd64 libdvbpsi10:amd64 libdvd-pkg libdvdcss-dev:amd64 libdvdcss2:amd64 libdvdnav4:amd64 libdvdread8t64:amd64 libdw1t64:amd64 libe-book-0.1-1:amd64 libeatmydata1:amd64 libebackend-1.2-11t64:amd64 libebml-dev:amd64;\n\n    # Batch 17\n    apt install -y libebml5:amd64 libebook-1.2-21t64:amd64 libebook-contacts-1.2-4t64:amd64 libecal-2.0-3:amd64 libedata-book-1.2-27t64:amd64 libedata-cal-2.0-2t64:amd64 libedataserver-1.2-27t64:amd64 libedataserverui-1.2-4t64:amd64 libedataserverui4-1.0-0t64:amd64 libedit2:amd64 libedit2:i386 libeditorconfig0:amd64 libefiboot1t64:amd64 libefivar1t64:amd64 libegl-dev:amd64 libegl-mesa0:amd64 libegl1:amd64 libei1:amd64 libeis1:amd64 libelf1t64:amd64 libelf1t64:i386 libenchant-2-2:amd64 libencode-locale-perl libeot0:amd64 libepoxy0:amd64 libepubgen-0.1-1:amd64 liberror-perl libespeak-ng1:amd64 libestr0:amd64 libetonyek-0.1-1:amd64 libevdev2:amd64 libevent-2.1-7t64:amd64 libevent-core-2.1-7t64:amd64 libexempi8:amd64 libexif12:amd64 libexiv2-28:amd64 libexiv2-data libexpat1:amd64 libexpat1:i386 libexpat1-dev:amd64 libext2fs2t64:amd64 libexttextcat-2.0-0:amd64 libexttextcat-data libextutils-depends-perl libfaac0t64:amd64 libfaad2:amd64 libfakeroot:amd64 libfastjson4:amd64 libfdisk1:amd64 libfdt1:amd64;\n\n    # Batch 18\n    apt install -y libffi-dev:amd64 libffi8:amd64 libffi8:i386 libfftw3-double3:amd64 libfftw3-single3:amd64 libfido2-1:amd64 libfile-basedir-perl libfile-desktopentry-perl libfile-fcntllock-perl libfile-listing-perl libfile-mimeinfo-perl libfile-stripnondeterminism-perl libflac14:amd64 libflashrom1:amd64 libflatpak0:amd64 libflite1:amd64 libfluidsynth3:amd64 libfont-afm-perl libfontconfig-dev:amd64 libfontconfig1:amd64 libfontconfig1-dev:amd64 libfontenc1:amd64 libfprint-2-2 libfprint-2-tod1:amd64 libfreeaptx0:amd64 libfreehand-0.1-1 libfreerdp-client3-3:amd64 libfreerdp-server3-3:amd64 libfreerdp3-3:amd64 libfreetype-dev:amd64 libfreetype6:amd64 libfribidi0:amd64 libftdi1-2:amd64 libfuse2t64:amd64 libfuse3-3:amd64 libfwupd3:amd64 libgail-common:amd64 libgail18t64:amd64 libgamemode0:amd64 libgamemodeauto0:amd64 libgav1-1:amd64 libgbm1:amd64 libgbm1:i386 libgc1:amd64 libgcc-12-dev:amd64 libgcc-14-dev:amd64 libgcc-s1:amd64 libgcc-s1:i386 libgck-1-0:amd64 libgck-2-2:amd64;\n\n    # Batch 19\n    apt install -y libgcr-4-4:amd64 libgcr-base-3-1:amd64 libgcr-ui-3-1:amd64 libgcrypt20:amd64 libgcrypt20-dev:amd64 libgd3:amd64 libgdata-common libgdata22:amd64 libgdbm-compat4t64:amd64 libgdbm-dev:amd64 libgdbm6t64:amd64 libgdk-pixbuf-2.0-0:amd64 libgdk-pixbuf2.0-bin libgdk-pixbuf2.0-common libgdm1 libgee-0.8-2:amd64 libgegl-0.4-0t64:amd64 libgegl-common libgeoclue-2-0:amd64 libgeocode-glib-2-0:amd64 libgexiv2-2:amd64 libgfapi0:amd64 libgfortran5:amd64 libgfrpc0:amd64 libgfxdr0:amd64 libgif7:amd64 libgimp-3.0-0:amd64 libgio-2.0-dev:amd64 libgio-2.0-dev-bin libgirepository-1.0-1:amd64 libgirepository-2.0-0:amd64 libgjs0g:amd64 libgl-dev:amd64 libgl1:amd64 libgl1-mesa-dri:amd64 libgles2:amd64 libglfw3:amd64 libglib-object-introspection-perl libglib-perl:amd64 libglib2.0-0t64:amd64 libglib2.0-bin libglib2.0-data libglib2.0-dev:amd64 libglib2.0-dev-bin libglibmm-2.4-1t64:amd64 libglibmm-2.68-1t64:amd64 libglu1-mesa:amd64 libglu1-mesa-dev:amd64 libglusterfs0:amd64 libglut3.12:amd64;\n\n    # Batch 20\n    apt install -y libglvnd0:amd64 libglx-dev:amd64 libglx-mesa0:amd64 libglx0:amd64 libgme0:amd64 libgmp-dev:amd64 libgmp10:amd64 libgmpxx4ldbl:amd64 libgnome-autoar-0-0:amd64 libgnome-bg-4-2t64:amd64 libgnome-bluetooth-3.0-13:amd64 libgnome-bluetooth-ui-3.0-13:amd64 libgnome-desktop-3-20t64:amd64 libgnome-desktop-4-2t64:amd64 libgnome-menu-3-0:amd64 libgnome-rr-4-2t64:amd64 libgnutls-dane0t64:amd64 libgnutls-openssl27t64:amd64 libgnutls28-dev:amd64 libgnutls30t64:amd64 libgoa-1.0-0b:amd64 libgoa-1.0-common libgoa-backend-1.0-2:amd64 libgom-1.0-0t64:amd64 libgomp1:amd64 libgpg-error-dev:amd64 libgpg-error-l10n libgpg-error0:amd64 libgpgme11t64:amd64 libgpgmepp6t64:amd64 libgphoto2-6t64:amd64 libgphoto2-l10n libgphoto2-port12t64:amd64 libgpm2:amd64 libgpod-common libgpod4t64:amd64 libgprofng0:amd64 libgraphene-1.0-0:amd64 libgraphite2-3:amd64 libgrilo-0.3-0:amd64 libgs-common libgs10:amd64 libgs10-common libgsf-1-114:amd64 libgsf-1-common libgsm1:amd64 libgsoap-2.8.135:amd64 libgsound0t64:amd64 libgssapi-krb5-2:amd64 libgssdp-1.6-0:amd64;\n\n    # Batch 21\n    apt install -y libgstreamer-gl1.0-0:amd64 libgstreamer-plugins-bad1.0-0:amd64 libgstreamer-plugins-base1.0-0:amd64 libgstreamer-plugins-good1.0-0:amd64 libgstreamer1.0-0:amd64 libgtk-3-0t64:amd64 libgtk-3-bin libgtk-3-common libgtk-4-1:amd64 libgtk-4-bin libgtk-4-common libgtk-4-media-gstreamer libgtk2.0-0t64:amd64 libgtk2.0-bin libgtk2.0-common libgtk3-perl libgtkmm-3.0-1t64:amd64 libgtkmm-4.0-0:amd64 libgtksourceview-5-0:amd64 libgtksourceview-5-common libgtop-2.0-11:amd64 libgtop2-common libgts-0.7-5t64:amd64 libgts-bin libgudev-1.0-0:amd64 libgupnp-1.6-0:amd64 libgupnp-av-1.0-3:amd64 libgupnp-dlna-2.0-4:amd64 libgupnp-igd-1.6-0:amd64 libgusb2:amd64 libgvc6 libgvpr2:amd64 libgweather-4-0t64:amd64 libgweather-4-common libgxps2t64:amd64 libhandy-1-0:amd64 libharfbuzz-gobject0:amd64 libharfbuzz-icu0:amd64 libharfbuzz-subset0:amd64 libharfbuzz0b:amd64 libheif-plugin-aomdec:amd64 libheif-plugin-aomenc:amd64 libheif-plugin-libde265:amd64 libheif1:amd64 libhfstospell11:amd64 libhidapi-dev:amd64 libhidapi-hidraw0:amd64 libhidapi-libusb0:amd64 libhogweed6t64:amd64 libhpmud0:amd64;\n\n    # Batch 22\n    apt install -y libhtml-form-perl libhtml-format-perl libhtml-parser-perl:amd64 libhtml-tagset-perl libhtml-tree-perl libhttp-cookies-perl libhttp-daemon-perl libhttp-date-perl libhttp-message-perl libhttp-negotiate-perl libhunspell-1.7-0:amd64 libhwasan0:amd64 libhwy1t64:amd64 libhyphen0:amd64 libi2c0:amd64 libibus-1.0-5:amd64 libibverbs1:amd64 libical3t64:amd64 libice6:amd64 libicu76:amd64 libid3tag0:amd64 libidn12:amd64 libidn2-0:amd64 libidn2-0:i386 libidn2-dev:amd64 libiec61883-0:amd64 libieee1284-3t64:amd64 libijs-0.35:amd64 libimagequant0:amd64 libimath-3-1-29t64:amd64 libimlib2t64:amd64 libimobiledevice-1.0-6:amd64 libimobiledevice-glue-1.0-0 libini-config5t64:amd64 libinih1:amd64 libinireader0:amd64 libinput-bin libinput10:amd64 libinstpatch-1.0-2:amd64 libio-html-perl libio-socket-ssl-perl libio-stringy-perl libip4tc2:amd64 libip6tc2:amd64 libipa-hbac0t64 libipc-system-simple-perl libipsec-mb2 libipt2 libiscsi7:amd64 libisl23:amd64;\n\n    # Batch 23\n    apt install -y libisoburn1t64:amd64 libisofs6t64:amd64 libitm1:amd64 libixml11t64:amd64 libjack-jackd2-0:amd64 libjansson4:amd64 libjavascriptcoregtk-4.1-0:amd64 libjavascriptcoregtk-6.0-1:amd64 libjbig0:amd64 libjbig2dec0:amd64 libjcat1:amd64 libjemalloc2:amd64 libjpeg-turbo-progs libjpeg-turbo8:amd64 libjpeg8:amd64 libjpeg9:amd64 libjq1:amd64 libjs-async libjs-events libjs-inherits libjs-is-typedarray libjs-jquery libjs-jquery-ui libjs-mathjax libjs-prettify libjs-regenerate libjs-source-map libjs-sphinxdoc libjs-sprintf-js libjs-typedarray-to-buffer libjs-underscore libjs-util libjson-c5:amd64 libjson-glib-1.0-0:amd64 libjson-glib-1.0-common libjsoncpp26:amd64 libjudydebian1 libjxl-gdk-pixbuf:amd64 libjxl0.11:amd64 libjxr-tools libjxr0t64:amd64 libk5crypto3:amd64 libkate1:amd64 libkeybinder-3.0-0:amd64 libkeyutils1:amd64 libkf6archive-data libkf6archive6:amd64 libkf6breezeicons6:amd64 libkf6codecs-data libkf6codecs6:amd64;\n\n    # Batch 24\n    apt install -y libkf6colorscheme-data libkf6colorscheme6:amd64 libkf6config-bin libkf6config-data libkf6configcore6:amd64 libkf6configgui6:amd64 libkf6configwidgets-data libkf6configwidgets6:amd64 libkf6coreaddons-data libkf6coreaddons6:amd64 libkf6globalaccel-data libkf6globalaccel6:amd64 libkf6guiaddons-bin libkf6guiaddons-data libkf6guiaddons6:amd64 libkf6i18n-data libkf6i18n6:amd64 libkf6iconthemes-bin libkf6iconthemes-data libkf6iconthemes6:amd64 libkf6iconwidgets6:amd64 libkf6itemviews-data libkf6itemviews6:amd64 libkf6sonnet-data libkf6sonnetcore6:amd64 libkf6sonnetui6:amd64 libkf6widgetsaddons-data libkf6widgetsaddons6:amd64 libkf6xmlgui-data libkf6xmlgui6:amd64 libklibc:amd64 libkmod2:amd64 libkrb5-3:amd64 libkrb5support0:amd64 libksba8:amd64 liblab-gamut1:amd64 liblangtag-common liblangtag1:amd64 liblapack3:amd64 liblbfgsb0:amd64 liblc3-1:amd64 liblcms2-2:amd64 liblcms2-utils libldacbt-abr2:amd64 libldacbt-enc2:amd64 libldap-common libldap2:amd64 libldb2:amd64 liblerc4:amd64 liblilv-0-0:amd64;\n\n    # Batch 25\n    apt install -y liblirc-client0t64:amd64 libllvm18:amd64 libllvm19:amd64 libllvm20:amd64 libllvm20:i386 liblmdb0:amd64 liblocale-gettext-perl liblouis-data liblouis20:amd64 liblouisutdml-bin liblouisutdml-data liblouisutdml9t64:amd64 liblqr-1-0:amd64 liblrdf0:amd64 liblsan0:amd64 liblsof0 libltc11:amd64 libltdl-dev:amd64 libltdl7:amd64 liblttng-ust-common1t64:amd64 liblttng-ust-ctl5t64:amd64 liblttng-ust1t64:amd64 liblua5.2-0:amd64 liblua5.4-0:amd64 libluajit-5.1-2:amd64 libluajit-5.1-common liblvm2cmd2.03:amd64 liblwp-mediatypes-perl liblwp-protocol-https-perl liblz4-1:amd64 liblzf1:amd64 liblzma-dev:amd64 liblzma5:amd64 liblzma5:i386 liblzo2-2:amd64 libm17n-0:amd64 libmad0:amd64 libmagic-mgc libmagic1t64:amd64 libmagickcore-7.q16-10:amd64 libmagickcore-7.q16-10-extra:amd64 libmagickwand-7.q16-10:amd64 libmail-sendmail-perl libmailtools-perl libmalcontent-0-0:amd64 libmanette-0.2-0:amd64 libmarisa0:amd64 libmatroska-dev:amd64 libmatroska7:amd64 libmaxminddb0:amd64;\n\n    # Batch 26\n    apt install -y libmbedcrypto16:amd64 libmbedtls-dev:amd64 libmbedtls21:amd64 libmbedx509-7:amd64 libmbim-glib4:amd64 libmbim-proxy libmbim-utils libmd0:amd64 libmd0:i386 libmd4c0:amd64 libmediaart-2.0-0:amd64 libmhash2:amd64 libminiupnpc18:amd64 libminizip1t64:amd64 libmjpegutils-2.1-0t64:amd64 libmm-glib0:amd64 libmng2:amd64 libmnl0:amd64 libmodplug1:amd64 libmount-dev:amd64 libmount1:amd64 libmozjs-128-0:amd64 libmp3lame0:amd64 libmpc3:amd64 libmpcdec6:amd64 libmpeg2-4:amd64 libmpeg2encpp-2.1-0t64:amd64 libmpfr6:amd64 libmpg123-0t64:amd64 libmplex2-2.1-0t64:amd64 libmsgraph-1-1:amd64 libmspack0t64:amd64 libmspub-0.1-1:amd64 libmtdev1t64:amd64 libmtp-common libmtp-runtime libmtp9t64:amd64 libmutter-16-0:amd64 libmwaw-0.3-3:amd64 libmypaint-1.5-1:amd64 libmypaint-common libmysofa1:amd64 libmythes-1.2-0:amd64 libnatpmp1t64:amd64 libnautilus-extension4:amd64 libnbd0 libncurses-dev:amd64 libncurses6:amd64 libncursesw6:amd64 libndctl6:amd64;\n\n    # Batch 27\n    apt install -y libndp0:amd64 libneon27t64:amd64 libnet-dbus-perl libnet-http-perl libnet-smtp-ssl-perl libnet-ssleay-perl:amd64 libnetfilter-conntrack3:amd64 libnetpbm11t64:amd64 libnetplan1:amd64 libnettle8t64:amd64 libnewt0.52:amd64 libnfnetlink0:amd64 libnfs14:amd64 libnfsidmap1:amd64 libnftables1:amd64 libnftnl11:amd64 libnghttp2-14:amd64 libnice10:amd64 libnl-3-200:amd64 libnl-genl-3-200:amd64 libnl-route-3-200:amd64 libnm0:amd64 libnma-common libnma-gtk4-0:amd64 libnma0:amd64 libnode-dev libnode115:amd64 libnorm1t64:amd64 libnotify-bin libnotify4:amd64 libnpp-13-0 libnpp-dev-13-0 libnpth0t64:amd64 libnsl2:amd64 libnspr4:amd64 libnspr4-dev libnss-mdns:amd64 libnss-sss:amd64 libnss-systemd:amd64 libnss3:amd64 libnss3-dev:amd64 libntfs-3g89t64:amd64 libnuma1:amd64 libnvfatbin-13-0 libnvfatbin-dev-13-0 libnvidia-cfg1-580:amd64 libnvidia-common-580 libnvidia-compute-580:amd64 libnvidia-compute-580:i386 libnvidia-container-tools;\n\n    # Batch 28\n    apt install -y libnvidia-container1:amd64 libnvidia-decode-580:amd64 libnvidia-decode-580:i386 libnvidia-egl-gbm1:amd64 libnvidia-egl-gbm1:i386 libnvidia-egl-wayland1:amd64 libnvidia-egl-wayland1:i386 libnvidia-egl-xcb1:amd64 libnvidia-egl-xcb1:i386 libnvidia-egl-xlib1:amd64 libnvidia-egl-xlib1:i386 libnvidia-encode-580:amd64 libnvidia-encode-580:i386 libnvidia-extra-580:amd64 libnvidia-fbc1-580:amd64 libnvidia-fbc1-580:i386 libnvidia-gl-580:amd64 libnvidia-gl-580:i386 libnvidia-gpucomp-580:amd64 libnvidia-gpucomp-580:i386 libnvjitlink-13-0 libnvjitlink-dev-13-0 libnvjpeg-13-0 libnvjpeg-dev-13-0 libnvme1t64 libnvptxcompiler-13-0 libnvvm-13-0 libodfgen-0.1-1:amd64 libogg0:amd64 libonig5:amd64 libonnx1t64:amd64 libonnxruntime1.21:amd64 libopenal-data libopenal1:amd64 libopencc-data libopencc1.1 libopencore-amrnb0:amd64 libopencore-amrwb0:amd64 libopenexr-3-1-30:amd64 libopengl-dev:amd64 libopengl0:amd64 libopenh264-8:amd64 libopenjp2-7:amd64 libopenmpt-modplug1:amd64 libopenmpt0t64:amd64 libopenni2-0:amd64 libopus0:amd64 libopusenc0:amd64 libopusfile0:amd64 liborc-0.4-0t64:amd64;\n\n    # Batch 29\n    apt install -y liborcus-0.18-0:amd64 liborcus-parser-0.18-0:amd64 libostree-1-1:amd64 libotf1:amd64 libp11-kit-dev:amd64 libp11-kit0:amd64 libpackagekit-glib2-18:amd64 libpagemaker-0.0-0:amd64 libpam-cap:amd64 libpam-fprintd:amd64 libpam-gnome-keyring:amd64 libpam-modules:amd64 libpam-modules-bin libpam-pwquality:amd64 libpam-runtime libpam-sss:amd64 libpam-systemd:amd64 libpam0g:amd64 libpanel-1-1:amd64 libpanel-common libpango-1.0-0:amd64 libpangocairo-1.0-0:amd64 libpangoft2-1.0-0:amd64 libpangomm-1.4-1v5:amd64 libpangomm-2.48-1t64:amd64 libpangoxft-1.0-0:amd64 libpaper-utils libpaper2:amd64 libparted2t64:amd64 libpath-utils1t64:amd64 libpathplan4:amd64 libpcap0.8t64:amd64 libpcaudio0:amd64 libpci3:amd64 libpciaccess0:amd64 libpciaccess0:i386 libpcre2-16-0:amd64 libpcre2-32-0:amd64 libpcre2-8-0:amd64 libpcre2-dev:amd64 libpcre2-posix3:amd64 libpcsclite1:amd64 libpeas-1.0-0:amd64 libpeas-common libperl5.40:amd64 libpfm4:amd64 libpgm-5.3-0t64:amd64 libphonenumber8:amd64 libpinyin-data:amd64 libpinyin15:amd64;\n\n    # Batch 30\n    apt install -y libpipeline1:amd64 libpipewire-0.3-0t64:amd64 libpipewire-0.3-common libpipewire-0.3-modules:amd64 libpixman-1-0:amd64 libpkcs11-helper1t64:amd64 libpkgconf3:amd64 libplacebo349:amd64 libplist-2.0-4:amd64 libplymouth5:amd64 libpmem1:amd64 libpmemobj1:amd64 libpng-dev:amd64 libpng-tools libpng16-16t64:amd64 libpocketsphinx3:amd64 libpodofo0.9.8t64 libpolkit-agent-1-0:amd64 libpolkit-gobject-1-0:amd64 libpolkit-qt5-1-1:amd64 libpoppler-cpp2:amd64 libpoppler-glib8t64:amd64 libpoppler147:amd64 libpopt0:amd64 libportal-gtk3-1:amd64 libportal-gtk4-1:amd64 libportal1:amd64 libpostproc-dev:amd64 libpostproc58:amd64 libppd2:amd64 libppd2-common libppsdocument-4.0-5:amd64 libppsview-4.0-4:amd64 libpq5:amd64 libproc2-0:amd64 libprotobuf-c1:amd64 libprotobuf-lite32t64:amd64 libprotobuf32t64:amd64 libproxy-tools libproxy1-plugin-gsettings:amd64 libproxy1-plugin-networkmanager:amd64 libproxy1v5:amd64 libpsl5t64:amd64 libpthreadpool0:amd64 libpulse-mainloop-glib0:amd64 libpulse0:amd64 libpwquality-common libpwquality1:amd64 libpython3-dev:amd64 libpython3-stdlib:amd64;\n\n    # Batch 31\n    apt install -y libpython3.13:amd64 libpython3.13-dev:amd64 libpython3.13-minimal:amd64 libpython3.13-stdlib:amd64 libqhull-r8.0:amd64 libqmi-glib5:amd64 libqmi-proxy libqmi-utils libqpdf30:amd64 libqrencode4:amd64 libqrtr-glib0:amd64 libqt5concurrent5t64:amd64 libqt5core5t64:amd64 libqt5dbus5t64:amd64 libqt5designer5:amd64 libqt5designercomponents5:amd64 libqt5gui5t64:amd64 libqt5help5:amd64 libqt5network5t64:amd64 libqt5opengl5-dev:amd64 libqt5opengl5t64:amd64 libqt5positioning5:amd64 libqt5positioning5-plugins:amd64 libqt5positioningquick5:amd64 libqt5printsupport5t64:amd64 libqt5qml5:amd64 libqt5qmlmodels5:amd64 libqt5qmlworkerscript5:amd64 libqt5quick5:amd64 libqt5quickparticles5:amd64 libqt5quickshapes5:amd64 libqt5quicktest5:amd64 libqt5quickwidgets5:amd64 libqt5serialport5:amd64 libqt5sql5-sqlite:amd64 libqt5sql5t64:amd64 libqt5svg5:amd64 libqt5test5t64:amd64 libqt5waylandclient5:amd64 libqt5waylandcompositor5:amd64 libqt5webchannel5:amd64 libqt5webchannel5-dev:amd64 libqt5webengine-data libqt5webengine5:amd64 libqt5webenginecore5:amd64 libqt5webenginewidgets5:amd64 libqt5widgets5t64:amd64 libqt5x11extras5:amd64 libqt5xml5t64:amd64 libqt6concurrent6:amd64;\n\n    # Batch 32\n    apt install -y libqt6core6t64:amd64 libqt6dbus6:amd64 libqt6gui6:amd64 libqt6labsplatform6:amd64 libqt6multimedia6:amd64 libqt6multimediawidgets6:amd64 libqt6network6:amd64 libqt6opengl6:amd64 libqt6openglwidgets6:amd64 libqt6pdf6:amd64 libqt6pdfquick6:amd64 libqt6pdfwidgets6:amd64 libqt6positioning6:amd64 libqt6positioning6-plugins:amd64 libqt6positioningquick6:amd64 libqt6printsupport6:amd64 libqt6qml6:amd64 libqt6qmlcompiler6:amd64 libqt6qmlmeta6:amd64 libqt6qmlmodels6:amd64 libqt6qmlnetwork6:amd64 libqt6qmlworkerscript6:amd64 libqt6quick6:amd64 libqt6quickcontrols2-6:amd64 libqt6quickshapes6:amd64 libqt6quicktemplates2-6:amd64 libqt6quicktest6:amd64 libqt6quickvectorimage6:amd64 libqt6quickvectorimagegenerator6:amd64 libqt6quickwidgets6:amd64 libqt6serialport6:amd64 libqt6spatialaudio6:amd64 libqt6sql6:amd64 libqt6sql6-sqlite:amd64 libqt6svg6:amd64 libqt6svgwidgets6:amd64 libqt6test6:amd64 libqt6texttospeech6:amd64 libqt6waylandclient6:amd64 libqt6waylandcompositor6:amd64 libqt6webchannel6:amd64 libqt6webchannelquick6:amd64 libqt6webengine6-data libqt6webenginecore6:amd64 libqt6webenginecore6-bin libqt6webenginequick6:amd64 libqt6webenginewidgets6:amd64 libqt6widgets6:amd64 libqt6wlshellintegration6:amd64 libqt6xml6:amd64;\n\n    # Batch 33\n    apt install -y libquadmath0:amd64 librabbitmq4:amd64 librados2 libraptor2-0:amd64 libraqm0:amd64 librasqal3t64:amd64 librav1e0.7:amd64 libraw1394-11:amd64 libraw23t64:amd64 librbd1 librdf0t64:amd64 librdmacm1t64:amd64 libre2-11:amd64 libreadline-dev:amd64 libreadline8t64:amd64 libref-array1t64:amd64 libreoffice-base-core libreoffice-calc libreoffice-common libreoffice-core libreoffice-draw libreoffice-gnome libreoffice-gtk3 libreoffice-help-common libreoffice-help-en-gb libreoffice-help-en-us libreoffice-impress libreoffice-l10n-en-gb libreoffice-l10n-en-za libreoffice-math libreoffice-style-colibre libreoffice-style-elementary libreoffice-style-yaru libreoffice-uiconfig-calc libreoffice-uiconfig-common libreoffice-uiconfig-draw libreoffice-uiconfig-impress libreoffice-uiconfig-math libreoffice-uiconfig-writer libreoffice-writer libresid-builder0c2a:amd64 librest-1.0-0:amd64 librevenge-0.0-0:amd64 librhash1:amd64 librhythmbox-core10:amd64 librist4:amd64 libroc0.4:amd64 librsvg2-2:amd64 librsvg2-common:amd64 librsync2t64:amd64;\n\n    # Batch 34\n    apt install -y librtmp1:amd64 librubberband2:amd64 libruby:amd64 libruby3.3:amd64 librygel-core-2.8-0:amd64 librygel-db-2.8-0:amd64 librygel-renderer-2.8-0:amd64 librygel-server-2.8-0:amd64 libsamplerate0:amd64 libsane-common libsane-hpaio:amd64 libsane1:amd64 libsasl2-2:amd64 libsasl2-modules:amd64 libsasl2-modules-db:amd64 libsasl2-modules-gssapi-mit:amd64 libsbc1:amd64 libsctp1:amd64 libsdl2-2.0-0:amd64 libseccomp2:amd64 libsecret-1-0:amd64 libsecret-common libselinux1:amd64 libselinux1-dev:amd64 libsemanage-common libsemanage2:amd64 libsensors-config libsensors5:amd64 libsensors5:i386 libsepol-dev:amd64 libsepol2:amd64 libserd-0-0:amd64 libsframe1:amd64 libsgutils2-1.48:amd64 libsharpyuv0:amd64 libshine3:amd64 libshout3:amd64 libsidplay1v5:amd64 libsidplay2:amd64 libsigc++-2.0-0v5:amd64 libsigc++-3.0-0:amd64 libsigsegv2:amd64 libsixel-bin libsixel1:amd64 libslang2:amd64 libslirp0:amd64 libsm6:amd64 libsmartcols1:amd64 libsmbclient0:amd64 libsnapd-glib-2-1:amd64;\n\n    # Batch 35\n    apt install -y libsnappy1v5:amd64 libsndfile1:amd64 libsnmp-base libsnmp40t64:amd64 libsodium23:amd64 libsonic0:amd64 libsord-0-0:amd64 libsoundtouch1:amd64 libsoup-2.4-1:amd64 libsoup-3.0-0:amd64 libsoup-3.0-common libsoup2.4-common libsource-highlight-common libsource-highlight4t64:amd64 libsoxr0:amd64 libspa-0.2-bluetooth:amd64 libspa-0.2-modules:amd64 libspandsp2t64:amd64 libspatialaudio0t64:amd64 libspectre1:amd64 libspeechd-module0:amd64 libspeechd2:amd64 libspeex1:amd64 libspeexdsp1:amd64 libspelling-1-2:amd64 libspelling-common libsphinxbase3t64:amd64 libspice-server1:amd64 libsqlite3-0:amd64 libsqlite3-dev:amd64 libsratom-0-0:amd64 libsrt1.5-gnutls:amd64 libsrtp2-1:amd64 libss2:amd64 libssh-4:amd64 libssh2-1t64:amd64 libssl-dev:amd64 libssl3t64:amd64 libsss-certmap0 libsss-idmap0 libsss-nss-idmap0 libstartup-notification0:amd64 libstdc++-14-dev:amd64 libstdc++6:amd64 libstdc++6:i386 libstemmer0d:amd64 libsuitesparseconfig7:amd64 libsvtav1enc2:amd64 libswresample-dev:amd64 libswresample5:amd64;\n\n    # Batch 36\n    apt install -y libswscale-dev:amd64 libswscale8:amd64 libsys-hostname-long-perl libsysmetrics1:amd64 libsysprof-6-6:amd64 libsysprof-6-modules:amd64 libsysprof-capture-4-dev:amd64 libsystemd-shared:amd64 libsystemd0:amd64 libtag2:amd64 libtalloc2:amd64 libtasn1-6:amd64 libtasn1-6-dev:amd64 libtasn1-doc libtcl8.6:amd64 libtdb1:amd64 libteamdctl0:amd64 libtevent0t64:amd64 libtext-charwidth-perl:amd64 libtext-iconv-perl:amd64 libtext-wrapi18n-perl libthai-data libthai0:amd64 libtheora0:amd64 libtheoradec1:amd64 libtheoraenc1:amd64 libtie-ixhash-perl libtiff6:amd64 libtimedate-perl libtinfo6:amd64 libtinfo6:i386 libtinysparql-3.0-0:amd64 libtirpc-common libtirpc3t64:amd64 libtk8.6:amd64 libtool libtotem-plparser-common libtotem-plparser18:amd64 libtotem0:amd64 libtpms0:amd64 libtraceevent1:amd64 libtraceevent1-plugin:amd64 libtracefs1:amd64 libtry-tiny-perl libts0t64:amd64 libtsan2:amd64 libtss2-esys-3.0.2-0t64:amd64 libtss2-mu-4.0.1-0t64:amd64 libtss2-rc0t64:amd64 libtss2-sys1t64:amd64;\n\n    # Batch 37\n    apt install -y libtss2-tcti-cmd0t64:amd64 libtss2-tcti-device0t64:amd64 libtss2-tcti-libtpms0t64:amd64 libtss2-tcti-mssim0t64:amd64 libtss2-tcti-spi-helper0t64:amd64 libtss2-tcti-swtpm0t64:amd64 libtss2-tctildr0t64:amd64 libturbojpeg0:amd64 libtwolame0:amd64 libu2f-udev libubsan1:amd64 libuchardet0:amd64 libudev-dev:amd64 libudev1:amd64 libudfread0:amd64 libudisks2-0:amd64 libumfpack6:amd64 libunbound8:amd64 libunibreak6:amd64 libunistring5:amd64 libunistring5:i386 libunity-protocol-private0:amd64 libunity-scopes-json-def-desktop libunity9 libuno-cppu3t64 libuno-cppuhelpergcc3-3t64 libuno-purpenvhelpergcc3-3t64 libuno-sal3t64 libuno-salhelpergcc3-3t64 libunwind8:amd64 libupnp17t64:amd64 libupower-glib3:amd64 liburcu8t64:amd64 liburi-perl liburing2:amd64 libusb-1.0-0:amd64 libusb-1.0-0-dev:amd64 libusb-1.0-doc libusbmuxd-2.0-7:amd64 libusbredirparser1t64:amd64 libuuid1:amd64 libuv1-dev:amd64 libuv1t64:amd64 libv4l-0t64:amd64 libv4lconvert0t64:amd64 libva-drm2:amd64 libva-wayland2:amd64 libva-x11-2:amd64 libva2:amd64 libvdpau1:amd64;\n\n    # Batch 38\n    apt install -y libvidstab1.1:amd64 libvirglrenderer1:amd64 libvisio-0.1-1:amd64 libvisual-0.4-0:amd64 libvlc-bin:amd64 libvlc5:amd64 libvlccore9:amd64 libvncclient1:amd64 libvncserver1:amd64 libvo-aacenc0:amd64 libvo-amrwbenc0:amd64 libvoikko1:amd64 libvolume-key1:amd64 libvorbis0a:amd64 libvorbisenc2:amd64 libvorbisfile3:amd64 libvpl2 libvpx9:amd64 libvte-2.91-0:amd64 libvte-2.91-common libvulkan-dev:amd64 libvulkan1:amd64 libwacom-common libwacom9:amd64 libwavpack1:amd64 libwayland-client0:amd64 libwayland-client0:i386 libwayland-cursor0:amd64 libwayland-egl1:amd64 libwayland-server0:amd64 libwayland-server0:i386 libwbclient0:amd64 libwebkit2gtk-4.1-0:amd64 libwebkitgtk-6.0-4:amd64 libwebp7:amd64 libwebpdemux2:amd64 libwebpmux3:amd64 libwebrtc-audio-processing-1-3:amd64 libwhoopsie-preferences0 libwhoopsie0:amd64 libwildmidi2:amd64 libwim15t64:amd64 libwinpr3-3:amd64 libwireplumber-0.5-0:amd64 libwmf-0.2-7:amd64 libwmf-0.2-7-gtk:amd64 libwmf0.2-7-gtk:amd64 libwmflite-0.2-7:amd64 libwnck-3-0:amd64 libwnck-3-common;\n\n    # Batch 39\n    apt install -y libwoff1:amd64 libwpd-0.10-10:amd64 libwpg-0.3-3:amd64 libwps-0.4-4:amd64 libwrap0:amd64 libwww-perl libwww-robotrules-perl libx11-6:amd64 libx11-6:i386 libx11-data libx11-dev:amd64 libx11-protocol-perl libx11-xcb-dev:amd64 libx11-xcb1:amd64 libx11-xcb1:i386 libx264-164:amd64 libx265-215:amd64 libx86-1:amd64 libxapian30:amd64 libxatracker2:amd64 libxau-dev:amd64 libxau6:amd64 libxau6:i386 libxaw7:amd64 libxcb-composite0:amd64 libxcb-cursor0:amd64 libxcb-damage0:amd64 libxcb-dri2-0:amd64 libxcb-dri3-0:amd64 libxcb-dri3-0:i386 libxcb-glx0:amd64 libxcb-icccm4:amd64 libxcb-image0:amd64 libxcb-keysyms1:amd64 libxcb-present0:amd64 libxcb-present0:i386 libxcb-randr0:amd64 libxcb-randr0:i386 libxcb-render-util0:amd64 libxcb-render0:amd64 libxcb-res0:amd64 libxcb-shape0:amd64 libxcb-shm0:amd64 libxcb-sync1:amd64 libxcb-sync1:i386 libxcb-util1:amd64 libxcb-xfixes0:amd64 libxcb-xfixes0:i386 libxcb-xinerama0:amd64 libxcb-xinput0:amd64;\n\n    # Batch 40\n    apt install -y libxcb-xkb1:amd64 libxcb-xtest0:amd64 libxcb-xv0:amd64 libxcb1:amd64 libxcb1:i386 libxcb1-dev:amd64 libxcomposite1:amd64 libxcursor1:amd64 libxcvt0:amd64 libxdamage1:amd64 libxdmcp-dev:amd64 libxdmcp6:amd64 libxdmcp6:i386 libxext-dev:amd64 libxext6:amd64 libxext6:i386 libxfixes3:amd64 libxfont2:amd64 libxft-dev:amd64 libxft2:amd64 libxi6:amd64 libxinerama1:amd64 libxkbcommon-x11-0:amd64 libxkbcommon0:amd64 libxkbfile1:amd64 libxkbregistry0:amd64 libxml-parser-perl libxml-twig-perl libxml-xpathengine-perl libxml2:amd64 libxml2:i386 libxml2-dev:amd64 libxmlb2:amd64 libxmlsec1-dev libxmlsec1t64:amd64 libxmlsec1t64-gcrypt:amd64 libxmlsec1t64-gnutls:amd64 libxmlsec1t64-nss:amd64 libxmlsec1t64-openssl:amd64 libxmu6:amd64 libxmuu1:amd64 libxnnpack0.20241108:amd64 libxnvctrl0:amd64 libxpm4:amd64 libxrandr2:amd64 libxrender-dev:amd64 libxrender1:amd64 libxres1:amd64 libxshmfence1:amd64 libxshmfence1:i386;\n\n    # Batch 41\n    apt install -y libxslt1-dev:amd64 libxslt1.1:amd64 libxss-dev:amd64 libxss1:amd64 libxt6t64:amd64 libxtables12:amd64 libxtst6:amd64 libxv1:amd64 libxvidcore4:amd64 libxvmc1:amd64 libxxf86dga1:amd64 libxxf86vm1:amd64 libxxhash0:amd64 libyajl2:amd64 libyaml-0-2:amd64 libyelp0:amd64 libyuv0:amd64 libzbar0t64:amd64 libzeitgeist-2.0-0:amd64 libzimg2:amd64 libzix-0-0:amd64 libzmq5:amd64 libzstd1:amd64 libzstd1:i386 libzvbi-common libzvbi0t64:amd64 libzxing3:amd64 linux-base linux-firmware linux-generic-hwe-24.04 linux-libc-dev:amd64 linux-modules-6.14.0-34-generic linux-modules-6.14.0-35-generic linux-modules-extra-6.14.0-34-generic linux-modules-extra-6.14.0-35-generic linux-perf linux-sound-base linux-sysctl-defaults linux-tools-6.14.0-34 linux-tools-6.14.0-34-generic linux-tools-6.14.0-35 linux-tools-6.14.0-35-generic linux-tools-common llvm llvm-20 llvm-20-dev llvm-20-linker-tools llvm-20-runtime llvm-20-tools llvm-runtime:amd64;\n\n    # Batch 42\n    apt install -y lm-sensors locales login login.defs logrotate logsave lsb-release lshw lsof lto-disabled-list luit lvm2 m17n-db m4 make makedumpfile man-db manpages manpages-dev mawk media-player-info media-types memtest86+ memtester mesa-libgallium:amd64 mesa-libgallium:i386 mesa-va-drivers:amd64 mesa-vdpau-drivers:amd64 mesa-vulkan-drivers:amd64 mobile-broadband-provider-info modemmanager mokutil mount mousetweaks mscompress msr-tools mtr-tiny mutter-common mutter-common-bin mythes-en-au mythes-en-us nano native-architecture nautilus nautilus-data nautilus-extension-gnome-terminal:amd64 nautilus-sendto ncurses-base ncurses-bin ncurses-term;\n\n    # Batch 43\n    apt install -y neofetch neovim neovim-runtime net-tools netbase netcat-openbsd netpbm netplan-generator netplan.io nettle-dev:amd64 network-manager network-manager-config-connectivity-ubuntu network-manager-openvpn network-manager-openvpn-gnome network-manager-pptp network-manager-pptp-gnome networkd-dispatcher nftables nginx nginx-common ninja-build nm-connection-editor node-abbrev node-acorn node-agent-base node-ajv node-ajv-keywords node-ampproject-remapping node-ansi-escapes node-ansi-regex node-ansi-styles node-anymatch node-aproba node-archy node-are-we-there-yet node-argparse node-arrify node-assert node-async node-async-each node-auto-bind node-babel-helper-define-polyfill-provider node-babel-plugin-add-module-exports node-babel-plugin-lodash node-babel-plugin-polyfill-corejs2 node-babel-plugin-polyfill-corejs3 node-babel-plugin-polyfill-regenerator node-babel7 node-babel7-runtime node-balanced-match;\n\n    # Batch 44\n    apt install -y node-base node-base64-js node-binary-extensions node-brace-expansion node-braces node-browserslist node-builtins node-cacache node-cache-base node-camelcase node-caniuse-lite node-chalk node-chokidar node-chownr node-chrome-trace-event node-ci-info node-cjs-module-lexer node-cli-boxes node-cli-cursor node-cli-table node-cli-truncate node-cliui node-clone node-clone-deep node-collection-visit node-color-convert node-color-name node-colors node-columnify node-commander node-commondir node-concat-stream node-console-control-strings node-convert-source-map node-copy-concurrently node-core-js node-core-js-compat node-core-js-pure node-core-util-is node-coveralls node-css-loader node-css-selector-tokenizer node-data-uri-to-buffer node-debbundle-es-to-primitive node-debug node-decamelize node-decompress-response node-deep-equal node-deep-is node-defaults;\n\n    # Batch 45\n    apt install -y node-define-properties node-define-property node-defined node-del node-delegates node-depd node-diff node-doctrine node-electron-to-chromium node-encoding node-enhanced-resolve node-envinfo node-err-code node-errno node-error-ex node-es-abstract node-es-module-lexer node-es6-error node-escape-string-regexp node-escodegen node-eslint-scope node-eslint-utils node-eslint-visitor-keys node-espree node-esprima node-esquery node-esrecurse node-estraverse node-esutils node-events node-execa node-fancy-log node-fast-deep-equal node-fast-levenshtein node-fetch node-file-entry-cache node-fill-range node-find-cache-dir node-find-up node-flat-cache node-flatted node-for-in node-for-own node-foreground-child node-fs-readdir-recursive node-fs-write-stream-atomic node-fs.realpath node-function-bind node-functional-red-black-tree node-gauge;\n\n    # Batch 46\n    apt install -y node-get-caller-file node-get-stream node-get-value node-glob node-glob-parent node-globals node-globby node-got node-graceful-fs node-growl node-gyp node-has-flag node-has-unicode node-has-value node-has-values node-hosted-git-info node-http-proxy-agent node-https-proxy-agent node-iconv-lite node-icss-utils node-ieee754 node-iferr node-ignore node-imurmurhash node-indent-string node-inflight node-inherits node-ini node-interpret node-ip node-ip-regex node-is-arrayish node-is-binary-path node-is-buffer node-is-descriptor node-is-extendable node-is-extglob node-is-glob node-is-number node-is-path-cwd node-is-path-inside node-is-plain-obj node-is-plain-object node-is-primitive node-is-stream node-is-typedarray node-is-windows node-isarray node-isexe node-isobject;\n\n    # Batch 47\n    apt install -y node-istanbul node-jest-debbundle node-jest-worker node-js-tokens node-js-yaml node-jsesc node-json-buffer node-json-parse-better-errors node-json-schema node-json-schema-traverse node-json-stable-stringify node-json5 node-jsonify node-jsonparse node-kind-of node-lcov-parse node-levn node-loader-runner node-locate-path node-lodash node-lodash-packages node-log-driver node-lowercase-keys node-lru-cache node-make-dir node-map-visit node-memfs node-memory-fs node-merge-stream node-micromatch node-mime node-mime-types node-mimic-fn node-mimic-response node-minimatch node-minimist node-minipass node-mixin-deep node-mkdirp node-move-concurrently node-ms node-mute-stream node-n3 node-negotiator node-neo-async node-nopt node-normalize-package-data node-normalize-path node-npm-bundled node-npm-package-arg;\n\n    # Batch 48\n    apt install -y node-npm-run-path node-npmlog node-object-assign node-object-inspect node-object-visit node-once node-opener node-optimist node-optionator node-osenv node-p-cancelable node-p-limit node-p-locate node-p-map node-parse-json node-pascalcase node-path-dirname node-path-exists node-path-is-absolute node-path-is-inside node-path-type node-picocolors node-pify node-pkg-dir node-postcss node-postcss-modules-extract-imports node-postcss-modules-values node-postcss-value-parser node-prelude-ls node-process-nextick-args node-progress node-promise-inflight node-promise-retry node-promzard node-prr node-punycode node-quick-lru node-randombytes node-re2:amd64 node-read node-read-package-json node-read-pkg node-readable-stream node-readdirp node-rechoir node-regenerate node-regenerate-unicode-properties node-regenerator-runtime node-regenerator-transform node-regexpp;\n\n    # Batch 49\n    apt install -y node-regexpu-core node-regjsgen node-regjsparser node-repeat-string node-require-directory node-require-from-string node-resolve node-resolve-cwd node-resolve-from node-restore-cursor node-resumer node-retry node-rimraf node-run-queue node-safe-buffer node-schema-utils node-sellside-emitter node-semver node-serialize-javascript node-set-blocking node-set-immediate-shim node-set-value node-shebang-command node-shebang-regex node-shell-quote node-signal-exit node-slash node-slice-ansi node-source-list-map node-source-map node-source-map-support node-spdx-correct node-spdx-exceptions node-spdx-expression-parse node-spdx-license-ids node-sprintf-js node-ssri node-stack-utils node-string-decoder node-string-width node-strip-ansi node-strip-bom node-strip-eof node-strip-json-comments node-supports-color node-tap node-tap-mocha-reporter node-tap-parser node-tapable node-tape;\n\n    # Batch 50\n    apt install -y node-tar node-terser node-text-table node-through node-time-stamp node-to-fast-properties node-to-regex-range node-tslib node-type-check node-typedarray node-typedarray-to-buffer node-undici node-unicode-canonical-property-names-ecmascript node-unicode-match-property-ecmascript node-unicode-match-property-value-ecmascript node-unicode-property-aliases-ecmascript node-union-value node-unique-filename node-unset-value node-uri-js node-util node-util-deprecate node-uuid node-v8-compile-cache node-v8flags node-validate-npm-package-license node-validate-npm-package-name node-watchpack node-wcwidth.js node-webassemblyjs node-webpack-sources node-which node-wide-align node-widest-line node-wordwrap node-wrap-ansi node-wrappy node-write node-write-file-atomic node-ws node-xtend node-y18n node-yallist node-yaml node-yargs node-yargs-parser nodejs nodejs-doc npm nsight-compute-2025.3.1;\n\n    # Batch 51\n    apt install -y nsight-systems-2025.3.2 ntfs-3g numactl nvidia-container-toolkit nvidia-container-toolkit-base nvidia-dkms-580-open nvidia-driver-580-open nvidia-firmware-580 nvidia-firmware-580-580.65.06 nvidia-kernel-common-580 nvidia-kernel-source-580-open nvidia-modprobe nvidia-open nvidia-persistenced nvidia-settings nvidia-vaapi-driver:amd64 nvme-cli ocl-icd-libopencl1:amd64 ocl-icd-libopencl1:i386 openjdk-21-jre:amd64 openjdk-21-jre-headless:amd64 openprinting-ppds openssh-client openssh-server openssh-sftp-server openssl openssl-provider-legacy openvpn optipng opus-tools orca os-prober ostree ovmf p11-kit p11-kit-modules:amd64 p7zip-full packagekit packagekit-tools papers papers-common parted passwd patch pci.ids pciutils pcmciautils perl perl-base perl-modules-5.40;\n\n    # Batch 52\n    apt install -y perl-openssl-defaults:amd64 pigz pinentry-curses pinentry-gnome3 pipewire:amd64 pipewire-alsa:amd64 pipewire-audio pipewire-bin pipewire-pulse pipx pkexec pkg-config:amd64 pkgconf:amd64 pkgconf-bin plexmediaserver plymouth plymouth-label plymouth-theme-spinner plymouth-theme-ubuntu-text pnp.ids po-debconf pocketsphinx-en-us policykit-desktop-privileges polkitd poppler-data poppler-utils postgresql-client postgresql-client-17 postgresql-client-common power-profiles-daemon powermgmt-base ppp pptp-linux printer-driver-brlaser printer-driver-c2esp printer-driver-foo2zjs printer-driver-foo2zjs-common printer-driver-hpcups printer-driver-m2300w printer-driver-min12xxw printer-driver-pnm2ppa printer-driver-postscript-hp printer-driver-ptouch printer-driver-pxljr printer-driver-sag-gdi printer-driver-splix procps psmisc publicsuffix pxelinux;\n\n    # Batch 53\n    apt install -y pyqt6-dev-tools python-apt-common python-babel-localedata python-matplotlib-data python3 python3-acme python3-apport python3-apsw python3-apt python3-aptdaemon python3-aptdaemon.gtk3widgets python3-argcomplete python3-argon2 python3-asgiref python3-asttokens python3-attr python3-autocommand python3-awscrt python3-babel python3-bcj python3-bcrypt python3-blinker python3-bpfcc python3-brlapi:amd64 python3-brotli python3-brotlicffi python3-bs4 python3-cairo python3-certbot python3-certbot-dns-cloudflare python3-certifi python3-cffi-backend:amd64 python3-chardet python3-chm python3-click python3-cloudflare python3-colorama python3-commandnotfound python3-configargparse python3-configobj python3-contourpy python3-cryptography python3-css-parser python3-cssselect python3-cups:amd64 python3-cupshelpers python3-cycler python3-dateutil python3-dbus python3-debconf;\n\n    # Batch 54\n    apt install -y python3-debian python3-decorator python3-defer python3-dev python3-distro python3-distro-info python3-distupgrade python3-dnspython python3-docutils python3-enchant python3-executing python3-fasteners python3-feedparser python3-flask python3-flask-cors python3-fonttools python3-fs python3-gdbm:amd64 python3-gi python3-html2text python3-html5-parser python3-html5lib python3-httplib2 python3-ibus-1.0 python3-icu python3-idna python3-ifaddr python3-inflate64 python3-inflect python3-ipython python3-itsdangerous python3-jaraco.context python3-jaraco.functools python3-jaraco.text python3-jedi python3-jeepney python3-jinja2 python3-jmespath python3-josepy python3-json-pointer python3-jsonpatch python3-jsonschema python3-jsonschema-specifications python3-jwt python3-kiwisolver python3-launchpadlib python3-lazr.restfulclient python3-lazr.uri python3-legacy-cgi python3-levenshtein;\n\n    # Batch 55\n    apt install -y python3-louis python3-lxml:amd64 python3-lxml-html-clean python3-lz4 python3-mako python3-markdown python3-markdown-it python3-markups python3-markupsafe python3-matplotlib python3-matplotlib-inline python3-mdurl python3-mdx-math python3-mechanize python3-minimal python3-monotonic python3-more-itertools python3-mpmath python3-msgpack python3-multivolumefile python3-nacl python3-netaddr python3-netifaces:amd64 python3-netplan python3-numpy python3-numpy-dev:amd64 python3-oauthlib python3-olefile python3-openssl python3-packaging python3-paramiko python3-parsedatetime python3-parso python3-passlib python3-pexpect python3-pil:amd64 python3-pil.imagetk:amd64 python3-pip python3-pip-whl python3-pkg-resources python3-platformdirs python3-pooch python3-problem-report python3-prompt-toolkit python3-psutil python3-ptyprocess python3-pure-eval python3-py7zr python3-pyasn1 python3-pyasyncore;\n\n    # Batch 56\n    apt install -y python3-pycryptodome python3-pygments python3-pyinotify python3-pyparsing python3-pyppmd python3-pyqt6 python3-pyqt6.qtmultimedia python3-pyqt6.qtqml python3-pyqt6.qtquick python3-pyqt6.qtsvg python3-pyqt6.qttexttospeech python3-pyqt6.qtwebchannel python3-pyqt6.qtwebengine python3-pyqt6.sip python3-pytz python3-pyzstd python3-rapidfuzz python3-referencing python3-regex python3-repoze.lru python3-requests python3-requests-toolbelt python3-rfc3339 python3-rich python3-roman python3-routes python3-rpds-py python3-ruamel.yaml python3-ruamel.yaml.clib python3-scipy python3-serial python3-setuptools python3-setuptools-whl python3-sgmllib3k python3-six python3-smbus:amd64 python3-software-properties python3-soupsieve python3-speechd python3-sss python3-stack-data python3-sympy python3-systemd python3-textile python3-texttable python3-tk:amd64 python3-tqdm python3-traitlets python3-typeguard python3-typeshed;\n\n    # Batch 57\n    apt install -y python3-typing-extensions python3-tz python3-ufolib2 python3-unicodedata2 python3-uno python3-update-manager python3-urllib3 python3-userpath python3-venv python3-wadllib python3-wcwidth python3-webencodings python3-webob python3-werkzeug python3-wheel python3-xdg python3-xkit python3-xxhash python3-yaml python3-zeroconf python3-zipp python3.13 python3.13-dev python3.13-gdbm python3.13-minimal python3.13-tk python3.13-venv qdoc-qt5 qemu-block-extra qemu-system-common qemu-system-data qemu-system-gui qemu-system-modules-opengl qemu-system-modules-spice qemu-system-x86 qemu-utils qhelpgenerator-qt5 qmake6:amd64 qmake6-bin qml6-module-assets-downloader:amd64 qml6-module-qml:amd64 qml6-module-qmltime:amd64 qml6-module-qt-labs-animation:amd64 qml6-module-qt-labs-folderlistmodel:amd64 qml6-module-qt-labs-platform:amd64 qml6-module-qt-labs-qmlmodels:amd64 qml6-module-qt-labs-settings:amd64 qml6-module-qt-labs-sharedimage:amd64 qml6-module-qt-labs-wavefrontmesh:amd64 qml6-module-qtcore:amd64;\n\n    # Batch 58\n    apt install -y qml6-module-qtnetwork:amd64 qml6-module-qtpositioning:amd64 qml6-module-qtqml:amd64 qml6-module-qtqml-models:amd64 qml6-module-qtqml-workerscript:amd64 qml6-module-qtqml-xmllistmodel:amd64 qml6-module-qtquick:amd64 qml6-module-qtquick-controls:amd64 qml6-module-qtquick-dialogs:amd64 qml6-module-qtquick-effects:amd64 qml6-module-qtquick-layouts:amd64 qml6-module-qtquick-localstorage:amd64 qml6-module-qtquick-nativestyle:amd64 qml6-module-qtquick-particles:amd64 qml6-module-qtquick-pdf:amd64 qml6-module-qtquick-shapes:amd64 qml6-module-qtquick-templates:amd64 qml6-module-qtquick-tooling:amd64 qml6-module-qtquick-vectorimage:amd64 qml6-module-qtquick-window:amd64 qml6-module-qttest:amd64 qml6-module-qtwebchannel:amd64 qml6-module-qtwebengine:amd64 qml6-module-qtwebengine-controlsdelegates:amd64 qpdf qt5-assistant qt5-gtk-platformtheme:amd64 qt5-qmake:amd64 qt5-qmake-bin qt5-qmltooling-plugins:amd64 qt6-base-dev:amd64 qt6-base-dev-tools qt6-declarative-dev:amd64 qt6-declarative-dev-tools qt6-gtk-platformtheme:amd64 qt6-image-formats-plugin-pdf:amd64 qt6-image-formats-plugins qt6-pdf-dev:amd64 qt6-positioning-dev:amd64 qt6-qmllint-plugins:amd64 qt6-qmlls-plugins:amd64 qt6-qmltooling-plugins:amd64 qt6-qpa-plugins:amd64 qt6-speech-flite-plugin:amd64 qt6-svg-plugins:amd64 qt6-translations-l10n qt6-wayland:amd64 qt6-webchannel-dev:amd64 qt6-webengine-dev:amd64 qt6-webengine-dev-tools;\n\n    # Batch 59\n    apt install -y qtattributionsscanner-qt5 qtbase5-dev:amd64 qtbase5-dev-tools qtchooser qtdeclarative5-dev:amd64 qtdeclarative5-dev-tools qtpositioning5-dev:amd64 qttools5-dev-tools qttranslations5-l10n qtwayland5:amd64 qtwebengine5-dev:amd64 qtwebengine5-dev-tools qtwebengine5-doc rake read-edid readline-common redis-tools remmina remmina-common remmina-plugin-rdp:amd64 remmina-plugin-secret:amd64 remmina-plugin-vnc:amd64 retext rfkill rhythmbox rhythmbox-data rhythmbox-plugin-alternative-toolbar rhythmbox-plugins ripgrep rpcsvc-proto rsync rsyslog rtkit ruby ruby-did-you-mean ruby-minitest ruby-net-telnet ruby-power-assert ruby-rubygems ruby-sdbm:amd64 ruby-test-unit ruby-webrick ruby-xmlrpc ruby3.3 rubygems-integration ruff rygel samba-libs:amd64 sane-airscan sane-utils;\n\n    # Batch 60\n    apt install -y sbsigntool screen-resolution-extra seabios seahorse secureboot-db sed sensible-utils session-migration sgml-base sgml-data shared-mime-info sharutils shim-signed shotwell shotwell-common simple-scan slirp4netns smartmontools snapd software-properties-common software-properties-gtk sonnet6-plugins:amd64 sound-icons sound-theme-freedesktop speech-dispatcher speech-dispatcher-audio-plugins:amd64 speech-dispatcher-espeak-ng sphinx-rtd-theme-common spice-vdagent sqlite3 squashfs-tools sse3-support ssh-import-id ssl-cert sssd sssd-ad sssd-ad-common sssd-common sssd-ipa sssd-krb5 sssd-krb5-common sssd-ldap sssd-proxy strace stress-ng sudo switcheroo-control syslinux-common sysprof sysstat;\n\n    # Batch 61\n    apt install -y system-config-printer-common system-config-printer-udev systemd systemd-cryptsetup systemd-hwe-hwdb systemd-oomd systemd-resolved systemd-sysv systemd-timesyncd sysvinit-utils tailscale tailscale-archive-keyring tar tcl tcl-dev:amd64 tcl-expect:amd64 tcl8.6 tcl8.6-dev:amd64 tcpdump tecla telnet terser testdisk tftpd-hpa thermald thin-provisioning-tools thunderbird thunderbird-locale-en thunderbird-locale-en-gb thunderbird-locale-en-us time timgm6mb-soundfont tinysparql tk tk-dev:amd64 tk8.6 tk8.6-blt2.5 tk8.6-dev:amd64 tmux tnftp toilet toilet-fonts totem totem-common totem-plugins tpm-udev trace-cmd traceroute tracker-extract transmission-common;\n\n    # Batch 62\n    apt install -y transmission-gtk tree ttf-mscorefonts-installer tzdata ubuntu-advantage-desktop-daemon ubuntu-desktop ubuntu-desktop-minimal ubuntu-docs ubuntu-drivers-common ubuntu-kernel-accessories ubuntu-keyring ubuntu-minimal ubuntu-pro-client ubuntu-pro-client-l10n ubuntu-release-upgrader-core ubuntu-release-upgrader-gtk ubuntu-report ubuntu-restricted-addons ubuntu-restricted-extras ubuntu-session ubuntu-session-xsession ubuntu-settings ubuntu-standard ubuntu-wallpapers ubuntu-wallpapers-plucky ucf udev udisks2 ufw unattended-upgrades unicode-data uno-libs-private unrar unzip update-inetd update-manager update-manager-core update-notifier update-notifier-common upower ure usb-creator-common usb-creator-gtk usb-modeswitch usb-modeswitch-data usb.ids usbmuxd usbutils util-linux uuid-dev:amd64;\n\n    # Batch 63\n    apt install -y uuid-runtime vdpau-driver-all:amd64 vim vim-common vim-runtime vim-tiny vlc vlc-bin vlc-data vlc-l10n vlc-plugin-access-extra:amd64 vlc-plugin-base:amd64 vlc-plugin-notify:amd64 vlc-plugin-qt:amd64 vlc-plugin-samba:amd64 vlc-plugin-skins2:amd64 vlc-plugin-video-output:amd64 vlc-plugin-video-splitter:amd64 vlc-plugin-visualization:amd64 vorbis-tools w3m w3m-img wamerican wbritish webp webp-pixbuf-loader:amd64 webpack wget whatsdesk whiptail whois whoopsie whoopsie-preferences wimtools wireless-regdb wireplumber wpasupplicant wsdd x11-apps x11-common x11-session-utils x11-utils x11-xkb-utils x11-xserver-utils x11proto-dev xauth xbitmaps xbrlapi xclip xcursor-themes;\n\n    # Batch 64\n    apt install -y xcvt xdg-dbus-proxy xdg-desktop-portal xdg-desktop-portal-gnome xdg-desktop-portal-gtk xdg-terminal-exec xdg-user-dirs xdg-user-dirs-gtk xdg-utils xfonts-base xfonts-encodings xfonts-scalable xfonts-utils xinit xinput xkb-data xml-core xorg xorg-docs-core xorg-sgml-doctools xorriso xserver-common xserver-xephyr xserver-xorg xserver-xorg-core xserver-xorg-input-all xserver-xorg-input-libinput xserver-xorg-input-wacom xserver-xorg-legacy xserver-xorg-video-all xserver-xorg-video-amdgpu xserver-xorg-video-ati xserver-xorg-video-fbdev xserver-xorg-video-intel xserver-xorg-video-nouveau xserver-xorg-video-nvidia-580 xserver-xorg-video-qxl xserver-xorg-video-radeon xserver-xorg-video-vesa xserver-xorg-video-vmware xtrans-dev xwayland xxd xz-utils yaru-theme-gnome-shell yaru-theme-gtk yaru-theme-icon yaru-theme-sound yelp yelp-xsl;\n\n    # Batch 65\n    apt install -y yudit-common zeitgeist-core zenity zenity-common zip zlib1g:amd64 zlib1g:i386 zlib1g-dev:amd64 zoom zstd;\n    log_success "Installed 3210 APT packages";\n\n    # Install Snap packages\n    log_info "📦 Installing Snap packages...";\n\n    if ! is_snap_installed "ascii-image-converter"; then\n        snap install ascii-image-converter --channel=35;\n        log_success "Installed snap: ascii-image-converter";\n    fi;\n\n    if ! is_snap_installed "audacity"; then\n        snap install audacity --channel=1212;\n        log_success "Installed snap: audacity";\n    fi;\n\n    if ! is_snap_installed "bare"; then\n        snap install bare --channel=5;\n        log_success "Installed snap: bare";\n    fi;\n\n    if ! is_snap_installed "chromium"; then\n        snap install chromium --channel=3293;\n        log_success "Installed snap: chromium";\n    fi;\n\n    if ! is_snap_installed "cups"; then\n        snap install cups --channel=1127;\n        log_success "Installed snap: cups";\n    fi;\n\n    if ! is_snap_installed "desktop-security-center"; then\n        snap install desktop-security-center --channel=99;\n        log_success "Installed snap: desktop-security-center";\n    fi;\n\n    if ! is_snap_installed "ffmpeg-2404"; then\n        snap install ffmpeg-2404 --channel=108;\n        log_success "Installed snap: ffmpeg-2404";\n    fi;\n\n    if ! is_snap_installed "firmware-updater"; then\n        snap install firmware-updater --channel=210;\n        log_success "Installed snap: firmware-updater";\n    fi;\n\n    if ! is_snap_installed "foliate"; then\n        snap install foliate --channel=1943;\n        log_success "Installed snap: foliate";\n    fi;\n\n    if ! is_snap_installed "gh"; then\n        snap install gh --channel=640;\n        log_success "Installed snap: gh";\n    fi;\n\n    if ! is_snap_installed "gnome-3-38-2004"; then\n        snap install gnome-3-38-2004 --channel=143;\n        log_success "Installed snap: gnome-3-38-2004";\n    fi;\n\n    if ! is_snap_installed "gnome-42-2204"; then\n        snap install gnome-42-2204 --channel=226;\n        log_success "Installed snap: gnome-42-2204";\n    fi;\n\n    if ! is_snap_installed "gnome-46-2404"; then\n        snap install gnome-46-2404 --channel=125;\n        log_success "Installed snap: gnome-46-2404";\n    fi;\n\n    if ! is_snap_installed "gtk-common-themes"; then\n        snap install gtk-common-themes --channel=1535;\n        log_success "Installed snap: gtk-common-themes";\n    fi;\n\n    if ! is_snap_installed "marktext"; then\n        snap install marktext --channel=9;\n        log_success "Installed snap: marktext";\n    fi;\n\n    if ! is_snap_installed "mesa-2404"; then\n        snap install mesa-2404 --channel=1165;\n        log_success "Installed snap: mesa-2404";\n    fi;\n\n    if ! is_snap_installed "nmap"; then\n        snap install nmap --channel=4171;\n        log_success "Installed snap: nmap";\n    fi;\n\n    if ! is_snap_installed "powershell"; then\n        snap install powershell --channel=316;\n        log_success "Installed snap: powershell";\n    fi;\n\n    if ! is_snap_installed "prompting-client"; then\n        snap install prompting-client --channel=104;\n        log_success "Installed snap: prompting-client";\n    fi;\n\n    if ! is_snap_installed "qmmp"; then\n        snap install qmmp --channel=180;\n        log_success "Installed snap: qmmp";\n    fi;\n\n    if ! is_snap_installed "snap-store"; then\n        snap install snap-store --channel=1270;\n        log_success "Installed snap: snap-store";\n    fi;\n\n    if ! is_snap_installed "snapd-desktop-integration"; then\n        snap install snapd-desktop-integration --channel=315;\n        log_success "Installed snap: snapd-desktop-integration";\n    fi;\n\n    if ! is_snap_installed "thunderbird"; then\n        snap install thunderbird --channel=846;\n        log_success "Installed snap: thunderbird";\n    fi;\n\n    if ! is_snap_installed "vidcutter"; then\n        snap install vidcutter --channel=83;\n        log_success "Installed snap: vidcutter";\n    fi;\n\n    if ! is_snap_installed "webkitgtk-6-gnome-2404"; then\n        snap install webkitgtk-6-gnome-2404 --channel=58;\n        log_success "Installed snap: webkitgtk-6-gnome-2404";\n    fi;\n\n    # Install Python packages\n    log_info "🐍 Installing Python packages...";\n\n    # Create temporary requirements file\n    cat > /tmp/bootstrap_requirements.txt << 'EOF'\naiobotocore==2.12.3\naiohappyeyeballs==2.4.0\naiohttp==3.10.5\naioitertools==0.7.1\naiosignal==1.2.0\nalabaster==0.7.16\naltair==5.0.1\nanaconda-anon-usage==0.4.4\nanaconda-catalogs==0.2.0\nanaconda-client==1.12.3\nanaconda-cloud-auth==0.5.1\nanaconda-navigator==2.6.3\nanaconda-project==0.11.1\nannotated-types==0.6.0\nanyio==4.2.0\nappdirs==1.4.4\narchspec==0.2.3\nargon2-cffi==21.3.0\nargon2-cffi-bindings==21.2.0\narrow==1.2.3\nastroid==2.14.2\nastropy==6.1.3\nastropy-iers-data==0.2024.9.2.0.33.23\nasttokens==2.0.5\nasync-lru==2.0.4\natomicwrites==1.4.0\nattrs==23.1.0\nAutomat==20.2.0\nautopep8==2.0.4\nBabel==2.11.0\nbcrypt==3.2.0\nbeautifulsoup4==4.12.3\nbinaryornot==0.4.4\nblack==24.8.0\nbleach==4.1.0\nblinker==1.6.2\nbokeh==3.6.0\nboltons==23.0.0\nbotocore==1.34.69\nBottleneck==1.3.7\nBrotli==1.0.9\ncachetools==5.3.3\ncairocffi==1.7.1\nCairoSVG==2.8.2\ncertifi==2024.8.30\ncffi==1.17.1\nchardet==4.0.0\ncharset-normalizer==3.3.2\nclick==8.1.7\ncloudpickle==3.0.0\ncolorama==0.4.6\ncolorcet==3.1.0\ncomm==0.2.1\nconda==24.9.2\nconda-build==24.9.0\nconda-content-trust==0.2.0\nconda_index==0.5.0\nconda-libmamba-solver==24.9.0\nconda-pack==0.7.1\nconda-package-handling==2.3.0\nconda_package_streaming==0.10.0\nconda-repo-cli==1.0.114\nconda-token==0.5.0+1.g2209e04\nconstantly==23.10.4\ncontourpy==1.2.0\ncookiecutter==2.6.0\ncryptography==43.0.0\ncssselect==1.2.0\ncssselect2==0.8.0\ncycler==0.11.0\ncytoolz==0.12.2\ndask==2024.8.2\ndask-expr==1.1.13\ndatashader==0.16.3\ndebugpy==1.6.7\ndecorator==5.1.1\ndefusedxml==0.7.1\ndiff-match-patch==20200713\ndill==0.3.8\ndistributed==2024.8.2\ndistro==1.9.0\ndocstring-to-markdown==0.11\ndocutils==0.18.1\net-xmlfile==1.1.0\nevdev==1.9.2\nexecuting==0.8.3\nfastjsonschema==2.16.2\nfilelock==3.13.1\nfiletype==1.2.0\nflake8==7.0.0\nFlask==3.0.3\nflask-cors==6.0.1\nfonttools==4.51.0\nfrozendict==2.4.2\nfrozenlist==1.4.0\nfsspec==2024.6.1\ngensim==4.3.3\ngitdb==4.0.7\nGitPython==3.1.43\ngreenlet==3.0.1\nh11==0.14.0\nh5py==3.11.0\nHeapDict==1.0.1\nhidapi==0.14.0.post4\nholoviews==1.19.1\nhttpcore==1.0.2\nhttpx==0.27.0\nhvplot==0.11.0\nhyperlink==21.0.0\nidna==3.7\nimagecodecs==2023.1.23\nimageio==2.33.1\nimagesize==1.4.1\nimbalanced-learn==0.12.3\nimportlib-metadata==6.11.0\nincremental==22.10.0\ninflection==0.5.1\niniconfig==1.1.1\nintake==2.0.7\nintervaltree==3.1.0\nipykernel==6.28.0\nipython==8.27.0\nipython-genutils==0.2.0\nipywidgets==7.8.1\nisort==5.13.2\nitemadapter==0.3.0\nitemloaders==1.1.0\nitsdangerous==2.2.0\njaraco.classes==3.2.1\njedi==0.19.1\njeepney==0.7.1\njellyfish==1.0.1\nJinja2==3.1.4\njmespath==1.0.1\njoblib==1.4.2\njson5==0.9.6\njsonpatch==1.33\njsonpointer==2.1\njsonschema==4.23.0\njsonschema-specifications==2023.7.1\njupyter==1.0.0\njupyter_client==8.6.0\njupyter-console==6.6.3\njupyter_core==5.7.2\njupyter-events==0.10.0\njupyter-lsp==2.2.0\njupyter_server==2.14.1\njupyter_server_terminals==0.4.4\njupyterlab==4.2.5\njupyterlab-pygments==0.1.2\njupyterlab_server==2.27.3\njupyterlab-widgets==1.0.0\nkeyring==24.3.1\nkiwisolver==1.4.4\nlazy_loader==0.4\nlazy-object-proxy==1.10.0\nlckr_jupyterlab_variableinspector==3.1.0\nLevenshtein==0.27.1\nlibarchive-c==5.1\nlibmambapy==1.5.8\nlinkify-it-py==2.0.0\nllvmlite==0.43.0\nlmdb==1.4.1\nlocket==1.0.0\nlxml==5.2.1\nlz4==4.3.2\nMarkdown==3.4.1\nmarkdown-it-py==2.2.0\nMarkupSafe==2.1.3\nmatplotlib==3.9.2\nmatplotlib-inline==0.1.6\nmccabe==0.7.0\nmdit-py-plugins==0.3.0\nmdurl==0.1.0\nmenuinst==2.1.2\nmistune==2.0.4\nmkl_fft==1.3.10\nmkl_random==1.2.7\nmkl-service==2.4.0\nmore-itertools==10.3.0\nmpmath==1.3.0\nmsgpack==1.0.3\nmultidict==6.0.4\nmultipledispatch==0.6.0\nmypy==1.11.2\nmypy-extensions==1.0.0\nnavigator-updater==0.5.1\nnbclient==0.8.0\nnbconvert==7.16.4\nnbformat==5.10.4\nnest-asyncio==1.6.0\nnetworkx==3.3\nnltk==3.9.1\nnotebook==7.2.2\nnotebook_shim==0.2.3\nnumba==0.60.0\nnumexpr==2.8.7\nnumpy==1.26.4\nnumpydoc==1.7.0\nopenpyxl==3.1.5\noverrides==7.4.0\npackaging==24.1\npandas==2.2.2\npandocfilters==1.5.0\npanel==1.5.2\nparam==2.1.1\nparsel==1.8.1\nparso==0.8.3\npartd==1.4.1\npathspec==0.10.3\npatsy==0.5.6\npexpect==4.8.0\npickleshare==0.7.5\npillow==10.2.0\npkce==1.0.3\npkginfo==1.10.0\nplatformdirs==3.10.0\nPlexAPI==4.17.1\nplotly==5.24.1\npluggy==1.0.0\nply==3.11\nprometheus-client==0.14.1\nprompt-toolkit==3.0.43\nProtego==0.1.16\nprotobuf==4.25.3\npsutil==5.9.0\nptyprocess==0.7.0\npure-eval==0.2.2\npy-cpuinfo==9.0.0\npyarrow==16.1.0\npyasn1==0.4.8\npyasn1-modules==0.2.8\npycodestyle==2.11.1\npycosat==0.6.6\npycparser==2.21\npyct==0.5.0\npycurl==7.45.3\npydantic==2.8.2\npydantic_core==2.20.1\npydeck==0.8.0\nPyDispatcher==2.0.5\npydocstyle==6.3.0\npyerfa==2.0.1.4\npyflakes==3.2.0\nPygments==2.15.1\nPyJWT==2.8.0\npylint==2.16.2\npylint-venv==3.0.3\npyls-spyder==0.4.0\npynput==1.8.1\npyodbc==5.1.0\npyOpenSSL==24.2.1\npyparsing==3.1.2\nPyQt5==5.15.10\nPyQt5-sip==12.13.0\nPyQtWebEngine==5.15.6\nPySide6==6.10.0\nPySide6_Addons==6.10.0\nPySide6_Essentials==6.10.0\nPySocks==1.7.1\npytest==7.4.4\npython-dateutil==2.9.0.post0\npython-dotenv==0.21.0\npython-json-logger==2.0.7\npython-Levenshtein==0.27.1\npython-lsp-black==2.0.0\npython-lsp-jsonrpc==1.1.2\npython-lsp-server==1.10.0\npython-slugify==5.0.2\npython-xlib==0.33\npytoolconfig==1.2.6\npytz==2024.1\npyviz_comms==3.0.2\nPyWavelets==1.7.0\npyxdg==0.27\nPyYAML==6.0.1\npyzmq==25.1.2\nQDarkStyle==3.2.3\nqstylizer==0.2.2\nQtAwesome==1.3.1\nqtconsole==5.5.1\nQtPy==2.4.1\nqueuelib==1.6.2\nRapidFuzz==3.14.1\nreferencing==0.30.2\nregex==2024.9.11\nrequests==2.32.3\nrequests-file==1.5.1\nrequests-toolbelt==1.0.0\nrfc3339-validator==0.1.4\nrfc3986-validator==0.1.1\nrich==13.7.1\nrope==1.12.0\nrpds-py==0.10.6\nRtree==1.0.1\nruamel.yaml==0.18.6\nruamel.yaml.clib==0.2.8\nruamel-yaml-conda==0.17.21\ns3fs==2024.6.1\nscikit-image==0.24.0\nscikit-learn==1.5.1\nscipy==1.13.1\nScrapy==2.11.1\nseaborn==0.13.2\nSecretStorage==3.3.1\nsemver==3.0.2\nSend2Trash==1.8.2\nservice-identity==18.1.0\nshiboken6==6.10.0\nsip==6.7.12\nsix==1.16.0\nsmart-open==5.2.1\nsmmap==4.0.0\nsniffio==1.3.0\nsnowballstemmer==2.2.0\nsortedcontainers==2.4.0\nsoupsieve==2.5\nSphinx==7.3.7\nsphinxcontrib-applehelp==1.0.2\nsphinxcontrib-devhelp==1.0.2\nsphinxcontrib-htmlhelp==2.0.0\nsphinxcontrib-jsmath==1.0.1\nsphinxcontrib-qthelp==1.0.3\nsphinxcontrib-serializinghtml==1.1.10\nspyder==5.5.1\nspyder-kernels==2.5.0\nSQLAlchemy==2.0.34\nstack-data==0.2.0\nstatsmodels==0.14.2\nstreamdeck==0.9.8\nstreamdeck-linux-gui==4.1.3\nstreamlit==1.37.1\nsympy==1.13.2\ntables==3.10.1\ntabulate==0.9.0\ntblib==1.7.0\ntenacity==8.2.3\nterminado==0.17.1\ntext-unidecode==1.3\ntextdistance==4.2.1\nthreadpoolctl==3.5.0\nthree-merge==0.1.1\ntifffile==2023.4.12\ntinycss2==1.2.1\ntldextract==5.1.2\ntoml==0.10.2\ntomli==2.0.1\ntomlkit==0.11.1\ntoolz==0.12.0\ntornado==6.4.1\ntqdm==4.66.5\ntraitlets==5.14.3\ntruststore==0.8.0\nTwisted==23.10.0\ntyping_extensions==4.11.0\ntzdata==2023.3\nuc-micro-py==1.0.1\nujson==5.10.0\nunicodedata2==15.1.0\nUnidecode==1.3.8\nurllib3==2.2.3\nw3lib==1.21.0\nwatchdog==4.0.1\nwcwidth==0.2.5\nwebencodings==0.5.1\nwebsocket-client==1.8.0\nWerkzeug==3.0.3\nwhatthepatch==1.0.2\nwidgetsnbextension==3.6.6\nwrapt==1.14.1\nwurlitzer==3.0.2\nxarray==2023.6.0\nxyzservices==2022.9.0\nyapf==0.40.2\nyarl==1.11.0\nzict==3.0.0\nzipp==3.17.0\nzope.interface==5.4.0\nzstandard==0.23.0\nEOF\n\n    # Install packages as target user\n    sudo -u "$TARGET_USER" pip3 install -r /tmp/bootstrap_requirements.txt --user;\n    rm /tmp/bootstrap_requirements.txt;\n    log_success "Installed 379 Python packages";\n\n    # Apply custom sysctl settings\n    log_info "⚙️ Applying custom sysctl settings...";\n\n    cat > /etc/sysctl.d/99-bootstrap.conf << 'EOF'\n# Custom sysctl settings restored by bootstrap\nvm.swappiness = 60\nfs.inotify.max_user_watches = 2000000\nnet.core.somaxconn = 4096\nkernel.shmmax = 18446744073692774399\nEOF\n\n    sysctl -p /etc/sysctl.d/99-bootstrap.conf;\n    log_success "Applied 4 sysctl settings";\n\n    # Restore .bashrc customizations\n    log_info "🐚 Restoring .bashrc customizations...";\n\n    # Decrypt and restore sensitive environment variables
+    log_info "🔐 Decrypting sensitive environment variables...";
     
-    # Source display server configuration functions
-    if [[ -f "./configure_display_server.sh" ]]; then
-        source "./configure_display_server.sh";
+    # Embedded encrypted secrets (base64 encoded)
+    ENCRYPTED_SECRETS_B64="eyJlbmNyeXB0ZWRfZGF0YSI6IHsibW9uZ29kYl91cmkiOiB7ImNpcGhlcnRleHQiOiAiVzNLVlVIWHBoa0RnMEhEL2I1NGxTbCtubXJKaHg4ZFFqWTVRRkcwOWJjZXJDejF3SWE5TTUrREltZ2pEZU1wN0U0cXpNd2hrYTVhNytkc2VjTk5ZRTRPMlNBc3hMbTFNQjROek5hUThQR2ppRGRKcE5BPT0iLCAibm9uY2UiOiAiamFxRlZOUEpWSWNiUm8rQyIsICJzYWx0IjogInJzTmdxZGVUWlp4MTdsZFZTU0N2OUE9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIn0sICJzc2hfaWRfZWQyNTUxOSI6IHsiY2lwaGVydGV4dCI6ICJLUEFncXNUV29uRWt0YjQrb1NEb1ZLUmZsTS9hQW1pWEF4N2J0VlA3TXMwSXgzdVVkRnpPSFV1Vkhod05UbWlGRk5SRzJDY21TNy9oQUZEb0hGbDEweUR3bjk4M0lpdm1LM3VVK1NsczI4ZDRFc1FmN2lRS2lYK1hoZmpGWUx1OU9JWVNNOTFJZHJkR1BZNEdIeDh2dDg4bnRPRjFtRkV1Y3o4dEplenJwd0ZkUXBpdEpIQzUxKytMazdkVHRkKy9SeEFtZWl1N0hUZWNMSzJjZERPNks0RkJXU1BGcG5zNEtYeGVUNzNLY1ptSDkyZ01lZksxdXc2a0hjM3lRcFZ1eXhmTStreGMrMU1mYVJYbFlUbTB2R2lRQytoZUJpLzZudjcvZi9QQWFDRUJHazlXNXA4QThVR2lNcEpTVDBHT3RObG1sZC9rZU5kaDhiOUJpbEpzbzRKYlQ3RGIrMkpqK3NlZk9XNUVESDB1K3NPY2RnVUxVVk5UdWI2K3B6dG1GRVhtWTlabFU5RURmWUJPekNvbDZpbEZjMHJsTXZvSVoxWlc2aXJyVXdCK05HOGlpNTREQlhraTBMQm1QV3Z4Y0VVZUhxbkNudThJVjB0eU1MYnpUNnVnSHJVUnIrV09CY2Y3RXh0UWUwVWkzWmpQRWFyN3hNVW9uL0lKeUZxbkxwRUF3QWgxNkN2SU5HL0I0QXZBSDI4SEJubkhuemJwNVJHVm91Y2ExaS9uSkozS29jWktXM3hNNm9VQ28rTTlWSWs9IiwgIm5vbmNlIjogIkxxeTZCVHV6YjE4SDE1Z2UiLCAic2FsdCI6ICJiZXIwQ2thd1IxdlVVemk0QlF0Yll3PT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9LCAic3NoX2lkX2VkMjU1MTlfZ2l0aHViIjogeyJjaXBoZXJ0ZXh0IjogIjhwUHBRQVJUa1ZFUlp1SUptcGxsd0hiSDhuNHVrK21PTnNaY29qQmRTSjdMQ1RwTlRsNXIwdkZLWHBscWRZQkZ6WWNSYjVSVUZneVl2RldKSUE1dDBOOEF0dWJUMk5MYjB0RWxRQkpvUDBpa2MyN1VZckswTkdsckNZTmVwcTA0S0pqbVNEeXkxbXJhRWJZMno3SDJrbW9Da0lKb2tRNGxqTDREVW5aN1NDSldCWW5pNmdZempZOHFoV1V6MVd4UlpOQkRDUHVQYTlKVjJlTG5STXcvOFZoSHlXZjE0WXV1YzRObU5GM3hDNXFBQU9UcVlmcDUrckpLNUozM1poK21wa3NuTnprNE9yN2JyZFp3VzAxbEhSRkxqQXZMVGhXSm1rRjhrb2xiZUc5MVRkemQyZU1MblkrSGwrZGU0SEtVYWFvVS9ablhWa0lGSmplSnZoVElvTUFKTHhENmRoU1NyRGU1MDN5M2pTY3hXdXlJbWdiNTJBMG85ckJRSDEreE5mZ29HNittMk8vbmlka1NqT1JLbkdyNWREbktkckNMQUhpczF2UDdHUnZQQnpGd0l4MjVEN2xmdGRuL3BLQXdmUU9rV1Z6Tk1XVzVucFVTNjBHSnQ3WVJGcTFnSllYODVQSGw3WjVYaC9CZUZLbm5lOHNMaVBKeXlQWTJLK3BJaUNpbWRKT3NNQmRDOTZNUGhKSkJBMVE2Y3VMNHp4bHpBc2JCdXJiOEVWeXJaSVczNnlKRE9qUWEiLCAibm9uY2UiOiAiTDg4eEtYaXpkcHN2NHlVcCIsICJzYWx0IjogImdQSG83cWZOc1F6TDVlN01oeGRzcXc9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIn0sICJzc2hfaWRfZWQyNTUxOV9tY29sbGFyZCI6IHsiY2lwaGVydGV4dCI6ICJRZFVFVFQ4ckV1ZCt4WFZnMUNZWW00Rlc0SlFZd2dMNldwQ3dCMVp1Vy9GVldONWlGbTZ0ZmdWckltOXhtZnQyOXdNNTBoSFZaTUd3a29BWXFBNTRMaVJhbmFIUTZUVTlMVHY4S0xacGZzS1ZTR3k2dlZXNlhuVjdaYUN5dlBWSXFJU0tMb09BY3RveUl0WDBSblBOYis5Z2JqYWNjZlNQSVFPUXlvb29ObUdVTm5LcEdNeEsrZWhiQkI5aUlKNzBRYTJyNjU3bkY0VndIeEwyb1p3UnZ6b0ExSGRXclBKYkIxOGlRM0dLLzBWbVA5eHBiRGhuREJiY1lnVC9JQTFLcXkrYmNoaEZmL2tKR2lzcE8rU3hOTFhQYitwSm5WVEgxa0FVWUhtZXZvdTNoK3ZCRkZ6dS9RV01YNEwrc1UzRTdlL0JrZkhHbGY5ME1yTTBBR3c3dFRSUlJVMnpaUVB1bEhpckUrK0I2aE1GQm5qSjBhR1R5dUFMakU3UGhmeG9UbExhTk1WU0hsK1hUM0kyK1JIcnpmeTlJUzNYeThXVHJhNExMS2lFendvM3FtKzFRYyttV0VuS1ZoNkxDVktyYUdXL2hTajRoL3k0eWNxV3R4YkZ0OGZINjBrQmh4WEU4cFA0VzVQTVorM3VmMVdvZkV1OHRGYWkrdTlzaDdPZlRIdGZmVGtCK0pYTmxmR3pTWjZTaGxsZ2t0RE9Ia3VUdSt0Y2Uzb3czYlVtV3BWQzBNaDA5UVhFIiwgIm5vbmNlIjogInd0eURYaGFXeGY0MzQwT1kiLCAic2FsdCI6ICJ3Z3kzZ1RNUndoWXF4cnlsRUF3KzZnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9LCAiZ2l0X3VzZXJfZW1haWwiOiB7ImNpcGhlcnRleHQiOiAiRGFUVmdGeFpaQ0hhSjFvQWhBOWJMY0ZsSWJ0emtjbHI3YjVTdWNJYXlRSlJWQT09IiwgIm5vbmNlIjogIkJDYWhwNUtPMGVkNUt2dEEiLCAic2FsdCI6ICJ5dTZ3Ui9iZ3FpaDBrdGxWblJ5eVNnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCJ9LCAiZ2l0X3VzZXJfbmFtZSI6IHsiY2lwaGVydGV4dCI6ICJOZzh5SGJmZmFBWWl5SUFiU2xiZEMyQmpPK1h1R3N3OGw0b2h4TDVwL2c9PSIsICJub25jZSI6ICJGWTZ2ay9WS3FGZzR5REU3IiwgInNhbHQiOiAiUG5QMFFUamxNY0xKMDluVW1sMXpCZz09IiwgImFsZ29yaXRobSI6ICJDaGFDaGEyMC1Qb2x5MTMwNSIsICJrZGYiOiAiQXJnb24yaWQifX0sICJ2ZXJzaW9uIjogIjIuMCIsICJ0b3RhbF9pdGVtcyI6IDYsICJlbmNyeXB0ZWRfZmlsZXMiOiB7ImlkX2VkMjU1MTkucHViLmJhY2t1cCI6IHsiY2lwaGVydGV4dCI6ICJFK1ZMQUxmYUg5ankxMm9oMnIwTTlsOXM4OGJSQytGbTBuZHowREkxL1drcFZCTUcrdWhGK2VWdUxSOS9FR1BpSlc2cUdkWEQybVRuRWxQZktKbDRSTHBIUmF0Tk1RR1BXWWlDVXk0L1FJcjdMNG02cnpRUE9sVTc4OXpQWUNuTTY5VXAvS1BXTCtZYjVzY0ovMVFFWDQ2M2xTRWZRdUgwIiwgIm5vbmNlIjogIm1veHc3S0FjZVh6MFVORmoiLCAic2FsdCI6ICJhTjN5a2hZdWh1WE96S1ZUUTR6T0xnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCIsICJwYXRoIjogIi9ob21lL21pY2hhZWwvLnNzaC9pZF9lZDI1NTE5LnB1Yi5iYWNrdXAiLCAibW9kZSI6ICI2NDQifSwgImlkX2VkMjU1MTkiOiB7ImNpcGhlcnRleHQiOiAiNjhSTFVtbDNUcFY5Z1Z5RmZTR2tXVE5VMSswSXlESkdxcy9pVW5lVkdnc3F1cVhjMllmdFl3T3NqekQrUjFhNlRRTXBFZmdNS3VpeFViV01JM2VjY0dEbkRmOUlaMVEzYXZPUWc3ZndMU3VpNFZuLzMrOXp1YlBSUXBnQ3N6Q0xpV0tVaDMzbGVXcVpiMS9lNWJzWFprUlZodjhIMFZTSlZEcExDazJmdjl4ZEZTSUQyM3ROb28zS3RIeFJwb2c4eVJLVXIvVW81MEsybVZKUHp2bEJBMWFabExTZUtEV01pMUE0MEV5cG5tUnpKMldNdm9lMEE2WWN0Umo0N2xXdGJSRFdTOUExRG13ZDAxZy9pUGRsT0pFUTZWNCtQWXpFNXJhd21wRGpyNzBPQllxKzlnZmwvRFAyQlNBT2FMQ0dJZDg2VGlWQ1NkN3BNdnZha3A3ZTZMdEtHdXR0ZklGVW5EN1R0dU12WDJnT3F0RStlMVdBN0ZpVFFDeHZQZ0xwd0MwblVzdHkvWGdSeC9xWW1EbXZKVWJ0N1U0akEyTmZ3aThBSlRZc3g5SkNEMjJUOTErN044N1h5b0RWcUFmRU9aQVRoaVdBaDIvazdURjdWRlpiNGd0U1pvdm1tT0NKUFFycVFLTkRtYWwxQXlOaWxxbUJIZVhIOWRuWkRFRjYxTUNtVzRGTS9tUUZhNmdtODV0R3ZQWG1MUWpzdTlBM01RdG9IMndMay8vNyt4WlVNcFY3eWkrZmwrTzlGRXlNZVN2YiIsICJub25jZSI6ICJJZzdJU0lsWFNjVUlQc1ZWIiwgInNhbHQiOiAiNWtTa1J4RHg5WTNmdkcxdnNQdEU0Zz09IiwgImFsZ29yaXRobSI6ICJDaGFDaGEyMC1Qb2x5MTMwNSIsICJrZGYiOiAiQXJnb24yaWQiLCAicGF0aCI6ICIvaG9tZS9taWNoYWVsLy5zc2gvaWRfZWQyNTUxOSIsICJtb2RlIjogIjYwMCJ9LCAiaWRfZWQyNTUxOV9naXRodWIiOiB7ImNpcGhlcnRleHQiOiAieTJzTmo1dzhaZitiZmZBK1ZTaEJEQlZpWE5XQkNJb1JvTW4yTHRBek11ZWpKMVlKUTlsbGw3VU9IY0tyUDA3MzhLcFJnL0Zsc3RWeFZrQ1RndHJTMnE4bzNyZDc0MU54NEp0eHltREd2Y3dIQnM5Tnk5MEFqVWh6UXF1ZjgrUFRjbFRoWC9jQWZZMDdJV2ViTURVM3pvVWVVa21SOWxqSWxHVW9STjUreTc5cEgzdDZMM3dDTmMxUFVQbVE2UW1CWm9CQW9yNzhsdHhPc0x5aTYrRzFId3dURmpaTHZaTk4vaklQYW9FbFg4SVhIK1hGa3E2T3RacUFFSXduNzJoVTFWZVpYaWtyWDdHTXRrN2EvTnVxZzRZQXFxTVgrdUNhQTZOak9jMUJZanZPSExDaWpUUG5YWFk1WmJXTHJmY1lKNmpkTkdLZlZzN1VlM3BWRzNQU3ZzLys1VmNqQ1lxV3g1d3E0ZVNya2QyL0o3Nm52TzhJRmtrZnN3Sy8xWDIrSS9KeENwaS9yVGJSSmxWRW9qRVhJMlNQTmJZeE93VWJEaVBPcXFiazFMSmJ5ZnNnOTE2aEw5Znl3ZjhZaDl0L0tFaW15K0M1QTVwYy9nMktSUDR4OGY0dVB2SHNEeWU2OG1TKzVycHZyZHA2WEdXai9mWUdHQ0prTUFEY1FmQTJRaTFMTnZ2eENJWWUySXRxd0FETVlrWFNWNjVLQWw1aXd6WXd4Ri9oazY4a0FJcGZiVmQwbHVuYy9BPT0iLCAibm9uY2UiOiAiRy9QVFJ2NElzREYvdm1kdSIsICJzYWx0IjogImtBaDBZREpIMGtlbFd5a1FQQ0E1RFE9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIiwgInBhdGgiOiAiL2hvbWUvbWljaGFlbC8uc3NoL2lkX2VkMjU1MTlfZ2l0aHViIiwgIm1vZGUiOiAiNjAwIn0sICJpZF9lZDI1NTE5X21jb2xsYXJkIjogeyJjaXBoZXJ0ZXh0IjogImRvOVFmU0ZHN2dxMTRvN1dnT0RBYnliSjJEZG1wejBIeXl0YUVkbk1rWTU2NTU3VmY1RFkzK1orWTZ0SExpbFp5b0g0WHQyaU5JMmdzbkJ2QW1UaHZlUEtCVmVxV3VaNG1sdEFVUmt3SDFoSXFCcGZYcTJjZ2pCSitmOXVXR3dMU1E0VGVCVkR0MUE4SkQ2S2lkSVJEanZhSithMGtpOHVkUDJKS1YyZE0welBMY04yOFNDQjIwMTZETjFhT3F3ZTg0WW5pVExHQXFPRnR6QUEyWDJLYjFUN2Jqdm83WEFzQXgvZW4rQmVOMVZXQWc0YTFBcnBXcE5McmJTQlFXd1M5QVRMUXAzTXFLcDB1WGJmaDNyNFdkWGtGZ0tUTW15bFc1VTZ5Z2ppWDJ0cklPUENwR3lPeHRSTDZTamNubjN3SEpKTzV2d0hKeVhaNFVSZjlkK0dwaVJFRzFxZHFjY01uMDd4eUZwc0J1UXFzVnFYL3VIWURBaXR3Smw3ZUJELzVsL0RSNy9kZ3B4OXhuK0Y0TVdXUGlIREhnSUQweEFmMXF4YjNiUU8yUEtGZlRKL2ZBaHY3NmpwaEU1bHVpbkp2SDVLRW95OGdRSmowV1V5NE5LdnlhM204V2hhTDlMaUtJVnlSNkx5dXd5cHU0U0JVMVBiUENKNDV0YndOLzIrSTJmNnVraEh1KzZSbndXc0lSS3ZVNEd2aDZBQXJmcWhReklYdmxKVFF2dDRsN2pwWlB6V0YrbTlDQT09IiwgIm5vbmNlIjogImVOQUkyLzRKTU5YdFRqb1QiLCAic2FsdCI6ICJmTVh4NXZiazRwSFhjU29EczlxNEtnPT0iLCAiYWxnb3JpdGhtIjogIkNoYUNoYTIwLVBvbHkxMzA1IiwgImtkZiI6ICJBcmdvbjJpZCIsICJwYXRoIjogIi9ob21lL21pY2hhZWwvLnNzaC9pZF9lZDI1NTE5X21jb2xsYXJkIiwgIm1vZGUiOiAiNjAwIn0sICIuZ2l0Y29uZmlnIjogeyJjaXBoZXJ0ZXh0IjogIitmUzBHWlFvbGdmQVJWWldHTTdpaGJLWmpTclpncFh5NCtlUllTd3FQZEVtdXJ3Zmk0OUFNVVN2eUhnT3g3WWhZQmprTWQzeU1jK3J5eW1tL1hEbmo2NjVvUU9WMFhCcWdjSjkiLCAibm9uY2UiOiAiblY4V1ZkZTAzNUdWbExGeCIsICJzYWx0IjogImltOHpvOVJxbzJSUkhVcDVkZGVsemc9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIiwgInBhdGgiOiAiL2hvbWUvbWljaGFlbC8uZ2l0Y29uZmlnIiwgIm1vZGUiOiAiNjY0In0sICJpbnN0YWxsXzB4cHJvdG9fZm9udC5zaCI6IHsiY2lwaGVydGV4dCI6ICJvZ0Z3NDc2Ui9ZbVBHSGtURVdKRE94eEJkR3FsSHhaZHB3cTc0MFZpNlZ6V253OWZoS1g5aW1qQUdwRXBXLzAzbnpvdFlYUDBjc0trY3BDYlRtNjNFTTVjeXlHckREbmVGNVR6cVhYYkZnaG5NaVMvd1pTT1VLME5OZlkwaG5hZTYvZXc5dlBPNnl6a0hWVEFEZzVDcnM2R3dvdEFNRWpuL2VUMEhLZTJaQUsvUHpKQlVGVUFCZGN0cDRCYjQvMDA0ZTBpeVAzb0VHYjZkUEZrNXdNZDJRWVJHVzZTNTl6WnRaNDl3M3FiV2VRVUdYNVlXL3d5cHVEWGQzTEVOeThnSlNFZGtCUkp5ZEJQK2JhZytQZUhSNThxTDJKcms4MnUrTk1mNTAyQ2xwTWx4MWZxQWFZb0xJVHRpQjVkV3JDVkZnR3FzeWR6M2x5UHJNUnE0ajJaamxLVGVqMTdiZ1RzUUkvLy9YN0VIbXkvUUNENmdpaDJ6cnJOeis3SnBRSVIvam5iemd0RXQzT0xWZ1VpWnY0Wk8vbWl1cVczZEFzL2Z5RURSL3NjbnRHdER4b3dPK3NvVGNFVVkrK3FYUGg1L2lFS2FmQWY3cTd3ODA2eFVMVXcxL0l2aGh5SVB0RHEzQTBxUUxIcFl6eS94bThIU3VNZFB5Zi9Xb1VHckRpeGt2WEJZQm5PbWNCTjRsMzlCdEVObzRrUmR6NG8xVGJGMDkxU2ROcDZJdHBnajNaRU9RaFZ3ejEvd0JZeHREWGNGY1oxbnJOWkJvazhLYmtZVnprYUh1QTFpUnBFTFgzcUg5UVRrQVdham9FckVJYmJsYU9zWW1xVU5pa2N1eXBibkRnT2Nhelc4eldhei93V1FvTThmRnRub2RJVDE1MU44T28zMUVYaG41MENzWEJEc0p1V0w4TW1kS3N3YTIySHRlZ0pJL0k0SkFrNXlrQWZpcTFOcE84VXZrVW9mTGJUVzdYZFl5Y0ZVdDdMcW1BaFc0MVgwR1NXVU5Pclc5QkpTa09Sak5rVXZQay9vdmJKZFZtNmhhOGlTZ0pGOHNqUlB3OCtTQXllck41NzUvaHJHVmpkalU2NVJUd2kyRFIyQ3owNG84bGhZWEJ3bXJ4blNkajM2NE5NZkMyTG9FT1RESjZiUjFtSDRGSXd6c3ZlSERkR01maVNOYTIzdm8zeDNCNW5pRWV1RWtTbjlvVmxST3VzNUZCVzVPZGE5S1BZRXZUUVI3dzc2UUs1ckk5bFpDbFRKVDl2SDRPdklFbzd6a1VZcGFUNlE0YzhWMGtnaGJoZWhMS3piNjhiYmkrZU85M0xpMGd2MG5NNlEvaXVBc3I2M24xK1FidFMwTGJYV1ZoOXRXUTZBVmJ6N1FkODVsNkFxaDQ2MlFkWDJaM0JKamk3cCttRXV3MTV1NUZiaForMktyT2F4TWZnQmRLQjdaMkVKZ1d0ZUVlRVEyTDZMTFZvbjBKMkI1dFlyOU9LT3BqNEI0MFBCM1QrTi9KRDNDTVVVY0FPV1lDejJ0cXI4TTFUbTNqcDB5WXhWQ0lFeDJpZXJsWjlxbis3ZGFGdDhQbmxyM3M1TnRRTnMzci9RVldtWnBaZStCMzdYWGxuS3Z0UUYwdTAwVzFNZ051NzVjZGluMXNKYVNnRTdRenVHWGZ2R0Zqb1JBamdWcUQ0cWhKV0VYWnFUY3oveGRna1pwNmpPVndyZ0RVdWxYVm5nTUJ6N0VOMTJmSWp5blFDMlVKSmZRdmxWTG4zVFEwYTRTWlZQK1RnYlFtZlBFKzlEMVFweThXcmN4djJKRk1ML2VBdW5qbnNoUE9ZUzR2cUxZRmZ4ZFpaWFFZbUJySnBzeGNEdmNEcEZPK25ncWtsVVAzaTVyaDZTRk1uRER6MisvbDQwSTU1VWVraGJUWm12WnBaU2o1TnJZSitBR3RSckR1TXREWm9iZGlxaUMyeXRzRThMdWJ1d2paaDFjNFY3MUdaR1BnMkorV3Jkd3JuOTlvdlpJSlQzbFlOTVFTaDVFS3ZiNlJib3ZuRXZmUk9HempST2JQUXYrTVQ3VXpydmFIc3VBNUdQbEgwY3oyQlExVXMvMlRlY2JLWHFUcHJyS25DQVBSNk03SDRhOW4rMkVVM2o5SWt2dnpmNytKK2JJTHpiZnNKdU9sYVUyVzBxTHVmM1k1bWYrTkZ5NlZWZHJRTllLeUFyY04zVlZBMVpBN3pOKzc2RDVQYUJ4bmhHNTcrQmMzSDA2Qk54Q0w5RjBJYmN3N2NMWlBPb20xZCt2Vlp2WEtpcGVEbHZ5UTJTY0Z3NytZVTBjaEdQMVZkMU9wcEQrcEpOd25QSEFGVU1jZks1citYQjZyeno5ekpWWDFSNlVkT1dSM0NqdGczR1F4NW4zUG1hWUliQWdrUThySUVGdW51RjFXYkpmeXQzdGJOc1FrWk9CMFVyeHBoZ1hKNDBXbVU3SjIxSy82U1FQS0tteW9SRzJjbkNLNTBjaGdjaGRmbnFIWjkrcDVDSHo0ZERONkk4dkFseURHdzVoRTh0cmpYc3ErN3MwZm5aZWlUVjVQQjZIT0Fmd01xZGIxNlg0VDZuUFVJSjhqUUFaay9tTTYrM1htRGRsVjRhOWFtSEMwd1ViTFRoZ01KWThacTE4dHZsVUdFM1RTL0o1SUdxWm1acTRuM2xIOWhqc3lwcXN1WGcrVkJ3TlZtR0FvUTAyS2lHWVlPcWtFaUQxZ2FXZjQ3R0wwRXNnaHR0T0liQmM2NHdsWGRuYUpsM0VLaVhSWm5sazZDOTl2ZUJ6YU4xZS9Gam9yQUZKRkU0b2NvVkxsYzlENWJ4aGw4Tk4wbW10Wlhzc2RyMEhobm9rUmljMk5NZmpOK2QvVTh0VnpBay96aHB0YmlZSGduS2d6VDhqNjRkNjRLdnhPcDdnNzZtZVRrL3o1VGdLQTAwNnU4em85TUJNNEJKL21hNmV0VTVsaFJ5eEk1dEFROEJPNTBuaWNQcTZlNmdSYnhrUzVTbzF0NENWbVNvcDhiWGtUODRnUkg2Mnd6Zm41NFZZanl6c2oxSjVhcmd1dEZieU5nc2tTdHNCZHo3MGUxQ3lZbzF1SEZsNlVSOUNVcHlremFKdkc1L3lDUzZiTVU0bW5UTVhZWXBsTkc0Q0s3MUc4aWg5RjlqTmM4V29rc2s3ajdXdTgyOUdSdzA1ZW1vVjRxWVY1SW5IeFhwRDBjckZjbk0rWnZBaG9GYWhkdSsxdURvTzNIbUg2ZWhJSUZUM21vbENVVVJmMU02bnB3S3pseDdTbGJlUnN4c0tOcDFWbDByOTNHT2g4QWgwQXd3VEJQczhPeDlqY1gwOWlEMW0rWDQwWmhpTjM2VGJ5K3VaSlJyQkw3SWtqbGRxWFNQbGYxazc3V2NNYzZyL3F3SGdUMlFQNkFqa1RHLzFONEQ5ZzAxNzRwNCsvaENZSHVsK3BQSzQwQnlEWUkrekp2WDBUMW9SYjA2SDNXT1FUbS85WElsT0pzeEgySmNnMG9lMVVxZUF0ZWJaTElJOHd0VCswdmIrMms0QUtxWDFEcytwVW5jWHFDcGg3WVhlTG9RelNEWTZEVkVqemdlcXp6c2RPTVJuYWI0dGQzRGp2MHF4bER1SnB6WW91MGpBenBONzUxcGN0alhFUUFWaHc1ZytkcHp6TzJYTU9aVHFPeXluR3FPTnhwR1orMGNsZWhNNnlIOTFlVG40VFJ0ZmhMdjI3aXY1ZUpCaFBXQnRWY294MkU1N3JFb1UwV01UK2xXcDg5cnVJNWdpOXhuaHJNcFllczNEbVA5VEgwQlM2Tlk4OVFFSS9RQzQxU2tzcVR2bFM1UmFmdlVJMWN2akNoeVVzeXJLUjNTaXlWRU1VbXdKMGI5VHFYU041aFREYmhBRTlkdHQrWnBzR3RTb3lxbUpIWHpvdTE0amtKT25yKzZoR0pTZkhxZjEwajdRWE80emRLMUR5SUxSYkNnUDhrZGYxQmQ2ckN4YUdTRGh2a0s3ZG5zZFVONFBNNDVFU1ArTi8xN1JnMWNYdUc4RWJ4MnRaNndWY09vS3F0M1V5cDFUVlpGYTArT21PTktleTlKemdGeHNQNjkrekZCSktmQU9VZ1ZxeEk1RExQV0VLSFI4c2tpaE9Xek1hVloxbzNxek5tVksxZE1DWnlva0h2SVFVUEZpKzdPYUozRDVjb2F4MWxhM1NzeEswL083Uy9FcXYxWlVKNytQT1luTDBmb0gvUnZHMFJieVlaa1NsOVpoRnMvSUhlU0xBa3BEN3lPMVFHelVnY2JRQklFSXRyYm54OXlXbkFzRlk3VmVPNXZkSGZsZ3IyV0RkMU05U2xrV21ENzhRSk1ZZmliSnRidnBHK3lWb1dEdXE0ck54M3VPa3pSdi9rQnBJV3hvcXZaSzZqU2Y5WmlEbS9aTk9hNENXU0NFR0JIWnl2ZS9yVE5QQVVmMGxrVDJyVElCZXc5RUpMSFRxZkx5RHdrcmhaREdPcHBsNkJHcFk2eHVaZm11WUFIQVJ0YnhFbFJmY05CU1RiRUhoa0VyaDE2LzV0TWNuaWVJSkI1cjl4STY2VUhSM1hVUDU0OSsreEdXcG81OWJyQU1pVERqTmtQcWhUQWxjOWFJcW9nRGxwaVkrTFY0aHdNdE1ibS9wbzY3SU96YisrMVloa08zM0ZEODNuTm9nU2VFeWFGdVBQUWtOalFOU0RyY0FldDBIL2JlcUVpdWl3d0NweHBKaFhLSmNjNjNuN3NsVUpqNnZJRVN2cjYxaEE2K1JXOVVKc1pMOFNDcUdYclQvSzMyRjYxTlZ2UEpHSFpWUXk2cWF2YVNhWlE0ZC8zM21wK0NRa1JtZzFTTktyYUZ0MWtNR2NxY1JTWWZmOEFRaUlzQjNKakk5RlNGNklsNmVIYXdyQ1FIWTRBenhUUU4yOEtxOUZqZVVKODBPRnNmTUdwUTF2V3dFWHJyeHNmQ1FxNDBOL0FJak1HTUs3ZU90SzlVak5kcThYTnNLWVdaSlkrNFJUdTM3YXdNVW1xYzlGT1NkMHVwSDJTQyttWHBtMUlTK0VabHhrNGtQemVwVHlpVXpDTGFRSU10bWVzRDREaUtXR0FSZnJBUVM1WEd3OVBldElBK3pCVS8yT1VUUVpMRWN3VTdHa3dWOTNGTUZVaTJQVithRjRqTnZaQ3RIYUs2bTQ5cithNW1ySFQvUktqSkNXU2lra255bkwyMWZVSzByNEFQYWxPR3kzN3hnZlYzelR2aDhoWVJaeURxQWUvZWk0bmZFcDh1VFU5NWI2eUJIaHUrbjM3alZXMVNrTWJIUGxzQUhNVE82bGh4eW9QblQ1WTZSUlROUyt3N2o3RFpZcXQ3bTdreUtsTEFvOCs0QjJ2blM0empSZ29mZFMwQkxBOU9aSk93aTRpaHoxSXBSd1p1WmF3a09ObzFSZk9Kc21RdWdZN0gyUm91U3ZFU2NNeEJHSlVWdHVlODZPUVo2L25ZYkxzUzZRWGF5MDc0b3I4MUhpRE1CZWxtd2FsSWlnNmFxaVFtWEdMMFk2WFI5cFF0SXYyUHNIZ0hnSytpcThnQm1udmVuYnJHNnRRSjNweVcxNUMzRzYvNWdLQlk5c1RDb0JNcEpCaUpxcjJ5WWhrZmcxZzhqQy90WDQvTXpwbWkxdm5xV3NOc0dEb244WkI5YlF4Mm9hRnFMNHorZnh1ckpySGlxbUtEZ2YvYTlMYlFoRmdBa21FN1ZOck00M2RnVFBjTXlCSWk1VHh2NU5hdllFc2NDams0N3BVclNaT2hFWVVQWEtyV3RPNWdRSTZRSkx6SEl3bWViWkhpaVdEdmd0YnAvblB6SVNRemdlempTbHJDNnNkaFkrcE5sSy9ZS1puZGxTYnhsN01hekJncDN0MjFkTjRIWmZTY0RjaU5Jc1BNUnRMajkvRUl1dHVWQlJBYkFrc2pwNGtPS1puYlFVWFlKekV2M2t0Q3dSQVBzSUs3ODdWZlFxbEgzNW9GbGRMYVNBLytSd3FYeHhkRnJ0ZnpFZU1tdzAyaWY0WFhoRGR3T0lyNTBJQm45TEh5SEdTZGsrdHJqT21ZdkZlMVlPOGZjQmxCa2ViamgyU3NRK3hUVnVWQTFOcFpBbk5kYk5Md3hCdUsvdU9IV1Z1dFlETWxjN01IZ3UzZkZuUThPcllURkNzWVcyVUhwRlRjeVM3RlFNQ244UHBqZFhwRjlmYWdPSFgwVEd6K3NBQmJXNi8xY1dqWHFzRjdvd0hlZ2JXeUF6WUVTbERYV0p2RlB1YXRXNlI0QStzeVFLSTdwUnNvRjdiNmN0WjBRVkJKVis2REFUeldjSkhWM1FJdXovWDhSUEdNdFJlYmlDRmgwZ3JxTDE0cnJVVHFJa0ViM0l2NnZlazBjZUJlUEs4UTEvdmJCR0FuRnhlNXdmMXhEb3hNNlVKK015NVpWWmtBb0JSanRsMk9BTER4a1RGUHFkcEtlYnVSQXZHQkNBZWtiQjltV0tTQytwTmNNM0V6bVpIMGs2TkIrUlgwYU05K2dPY3JPTkttWlM2SnMxdGFJRUcxcnBHcjZTZFk4QzJDTnFmb2IvYitmUWFiZHRlQ0R1YW1PUVdDWHd5M09VTVBIa1pvN1JKVC9UU1h3dkVBUTE3MDM3SWFVWkhQMU1BZEc5K1UvMlBTbzRLOXJ6MzBqSkYvODNTUlVvVEtmbnZXWWhqSUxHWmdWTDQxOFN1ZTNybEpkSHhqNmhzcWphcWJGbWNPdWZVUXFJNVpUR0NQMkJHQ2F0QWZMU2xUZSt3NFUzdVNCMjR4eGtkY3ZsenNzVFZNRjRBQ1lhK0RoaVIzcjk2MHJVcVpQMTN5QW9WVUkrcG81cGphSHZEOFlPeGNpMFN0S2p0aHVaY3UwS2w0WDlNWjF3TEM1RmlURlhFTlpWUUVuTHpaelJsQkE0dTdvYjRqcjdxeGVXYURLMzJZTUJ4N3RQUjMvQUFGa2ZLU0l0eGgxSTMvWnJXazVXMTRlMDlWRWNacDJ3bVZLS1kxWTRNaFBDSFhWYVFkK2JBSnptWm1GcWxWdlUzN2NHYXB1YkFBeTgzQ1BwdzNITWNhRUhxQjUxWFprVjUvdU1ER3RhMnZMSmtYWVVielBwVCtHQkFYR0RvT0hyeVdwTFgxSzN0SW5DSWdNRCtWdGZVMi9FWnVoYmRPTnZQSWlCZWVKOGc5bEZFQWVJelQ3SiswMkNoRjNaS3FaSk5tTlFqbTJDM3czcVQ1c3ZENjN5ekNuR3VZM1Bxamg0aTMveVc2Q2NCekVTdCtZQUJtMVZIdlRRZ29xTTFUTGM4anprOTRyUzN0cGk0NUY0YnphRjVaYmU5UlBwMlFicXUxMHcySklVTEx2Z3dXWm1qeWJXdThPbThNU3ZUd21xMncwWHgyQmJmSUVDMDRoWThPQW9JckVlRXFsd1JXcDUxV0NuUEg4cm0yMmJXOG5XV2JXL3lJbEhMS1k1SDNXc2M4N05DQ2RYclRiNU5xSWhlVGd6ZTlQdTRMd0o1bGhhUjEwbTA5VkZvNXUvenVxc3hVRE1oTk1RM2xBOEg1Mlc0c1RTK04vMFlsU2Rocng1R285NEE5UFViZTBLTm9zMjlnZ1FtWnJCb1VSaHVkZldISXRXSnBEbzFoZi9SZzVFSkp1dVg4S0FtbDE2V2ZXWlRnUVIiLCAibm9uY2UiOiAicUltSkNRbGFjQngvNk04QSIsICJzYWx0IjogImdNZUg3VEJGTWZEZU5keXd0RjA0UlE9PSIsICJhbGdvcml0aG0iOiAiQ2hhQ2hhMjAtUG9seTEzMDUiLCAia2RmIjogIkFyZ29uMmlkIiwgInBhdGgiOiAiLi9pbnN0YWxsXzB4cHJvdG9fZm9udC5zaCIsICJtb2RlIjogIjc3NSJ9fSwgInRvdGFsX2ZpbGVzIjogNn0=";
+    
+    # Python decryption inline script
+    python3 - <<PYTHON_SCRIPT
+import json, base64, sys, getpass, os;
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305;
+from argon2.low_level import hash_secret, Type;
+
+# Recreate crypto functions inline
+def derive_key(password, salt):
+    return hash_secret(
+        password.encode('utf-8'), salt,
+        time_cost=3, memory_cost=65536, parallelism=4,
+        hash_len=32, type=Type.ID
+    ), salt;
+
+def decrypt(encrypted_data, password):
+    try:
+        ciphertext = base64.b64decode(encrypted_data['ciphertext']);
+        nonce = base64.b64decode(encrypted_data['nonce']);
+        salt = base64.b64decode(encrypted_data['salt']);
+        key, _ = derive_key(password, salt);
+        cipher = ChaCha20Poly1305(key);
+        plaintext_bytes = cipher.decrypt(nonce, ciphertext, None);
+        return plaintext_bytes.decode('utf-8');
+    except Exception as e:
+        raise ValueError(f"Decryption failed: {e}");
+
+# Load encrypted data
+try:
+    encrypted_json = base64.b64decode("$ENCRYPTED_SECRETS_B64").decode('utf-8');
+    encrypted_data = json.loads(encrypted_json);
+    
+    # Get password from user or environment variable
+    password = os.environ.get('BOOTSTRAP_SECRET')
+    if not password:
+        password = getpass.getpass("Enter master password to decrypt secrets: ")
+    else:
+        print("Using password from BOOTSTRAP_SECRET environment variable")
+    
+    # Decrypt each secret and append to .bashrc
+    user_home = os.environ.get('USER_HOME', '/home/' + os.environ.get('SUDO_USER', 'user'));
+    bashrc_path = f"{user_home}/.bashrc";
+    
+    with open(bashrc_path, 'a') as f:
+        f.write("\n# Decrypted sensitive environment variables\n");
         
-        # Detect current display server
-        CURRENT_DISPLAY_SERVER=$(detect_display_server);
-        
-        case "$CURRENT_DISPLAY_SERVER" in
-            "wayland")
-                log_info "Wayland detected. For optimal compatibility with applications like Zoom screen sharing,";
-                log_info "the system can be configured to use X11 instead.";
-                log_warning "⚠️  Display server changes require reboot and will NOT restart GUI immediately";
-                log_info "This ensures running applications (installs, updates, etc.) are not interrupted.";
-                
-                # Configure X11 for better compatibility
-                log_info "Configuring X11 for improved application compatibility...";
-                configure_x11;
-                log_success "Display server configured for X11 (effective after reboot)";
-                ;;
-            "x11")
-                log_success "X11 already configured - optimal for application compatibility";
-                ;;
-            *)
-                log_warning "Unknown display server state, skipping configuration";
-                ;;
-        esac;
+        encrypted_items = encrypted_data.get('encrypted_data', {});
+        for var_name, encrypted_value in encrypted_items.items():
+            if isinstance(encrypted_value, dict) and 'ciphertext' in encrypted_value:
+                try:
+                    decrypted_value = decrypt(encrypted_value, password);
+                    f.write(f'export {var_name}="{decrypted_value}"\n');
+                    print(f"✅ Decrypted: {var_name}");
+                except Exception as e:
+                    print(f"❌ Failed to decrypt {var_name}: {e}");
+                    sys.exit(1);
+    
+    print("🔓 All secrets decrypted successfully");
+    
+except Exception as e:
+    print(f"❌ Decryption process failed: {e}");
+    sys.exit(1);
+PYTHON_SCRIPT
+
+    if [[ $? -eq 0 ]]; then
+        log_success "Sensitive environment variables restored";
     else
-        log_warning "Display server configuration script not found - skipping";
+        log_error "Failed to decrypt sensitive data";
+        return 1;
     fi;
 
-    # Ensure pip3 is available before installing Python packages
-    if should_run_section "Python"; then
-        log_info "🔧 [Python] Checking Python pip3 availability...";
-        if ! command -v pip3 >/dev/null 2>&1; then
-            log_info "Installing python3-pip...";
-            apt update;
-            apt install -y python3-pip;
-            log_success "pip3 installed";
-        else
-            log_info "pip3 already available";
-        fi;
-    fi;
-    
-    # Install APT packages - FIXED: Proper shell formatting with actual newlines
-    if should_run_section "APT"; then
-        log_info "📦 [APT] Installing APT packages...";
-    fi;
-
-    # Install packages in smaller, manageable batches to avoid timeout issues
-    
-    # Essential development tools and libraries
-    if should_run_section "APT"; then
-        log_info "Installing essential development tools...";
-        apt install -y build-essential cmake ninja-build autoconf automake libtool \
-            pkg-config git git-man curl wget gnupg software-properties-common \
-            apt-transport-https;
-
-        # Core system packages
-        log_info "Installing core system packages...";
-        apt install -y 7zip accountsservice acl adduser base-files base-passwd \
-            bash bash-completion bc coreutils findutils grep gawk sed \
-            util-linux mount fdisk parted;
-
-        # Development libraries and headers
-        log_info "Installing development libraries...";
-        apt install -y libc6-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev \
-            libreadline-dev libsqlite3-dev libncurses-dev libbz2-dev \
-            zlib1g-dev libgdbm-dev;
-
-        # Python and related packages  
-        log_info "Installing Python packages...";
-        apt install -y python3 python3-dev python3-pip python3-venv python3-wheel \
-            python3-setuptools python3-apt python3-dbus;
-
-        # Multimedia and graphics
-        log_info "Installing multimedia packages...";
-        apt install -y ffmpeg imagemagick vlc vlc-bin vlc-data libdvd-pkg \
-            ubuntu-restricted-extras gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-            gstreamer1.0-libav gstreamer1.0-vaapi;
-    fi;
-
-    # Configure DVD decryption and multimedia codecs
-    if should_run_section "Multimedia"; then
-        log_info "🎬 [Multimedia] Configuring multimedia codecs and DVD support...";
-    fi;
-    
-    # Configure libdvd-pkg for encrypted DVD playbook
-    if should_run_section "Multimedia"; then
-        if dpkg-query -W -f="\${Status}" libdvd-pkg 2>/dev/null | grep -q "install ok installed"; then
-            # Reconfigure libdvd-pkg to install libdvdcss2
-            DEBIAN_FRONTEND=noninteractive dpkg-reconfigure libdvd-pkg;
-            log_success "DVD decryption configured";
-        fi;
-        
-        # Install additional codec packages with automatic version detection
-        log_info "Installing multimedia codec packages with latest versions...";
-        
-        # Core multimedia packages that should always be available
-        apt install -y --no-install-recommends lame flac opus-tools vorbis-tools;
-        
-        # Install versioned packages using latest available versions
-        install_latest_package "libavcodec-extra";
-        install_latest_package "libavformat-extra";
-        install_latest_package "libavutil-extra";
-        install_latest_package "libx264";
-        install_latest_package "libx265";
-        
-        # Optional packages (install if available)
-        for pkg in faac faad libmatroska-dev libmkv libebml-dev; do
-            if latest_pkg=$(find_latest_package "$pkg"); then
-                install_latest_package "$pkg";
-            else
-                log_info "Optional package $pkg not available, skipping";
-            fi;
-        done;
-        
-        # Install Microsoft Core Fonts (Method 3: Combined approach)
-        log_info "Installing Microsoft Core Fonts with EULA auto-acceptance...";
-        echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections;
-        DEBIAN_FRONTEND=noninteractive apt install -y ttf-mscorefonts-installer;
-        log_success "Microsoft Core Fonts installed (EULA accepted)";
-        
-        # Ensure proper GStreamer codec registry is updated
-        sudo -u "$TARGET_USER" gst-inspect-1.0 > /dev/null 2>&1 || true;
-        
-        log_success "Multimedia codecs and fonts configured for MP4, MKV, DVD, and common formats";
-    fi;
-
-
-    # Desktop environment essentials
-    if should_run_section "Desktop"; then
-        log_info "[Desktop] Installing desktop environment packages...";
-        apt install -y ubuntu-desktop-minimal gnome-shell gnome-terminal \
-            nautilus gdm3 dconf-editor;
-
-        # Additional useful tools
-        log_info "[Desktop] Installing additional tools...";
-        apt install -y vim nano htop tree rsync zip unzip p7zip-full \
-            net-tools openssh-client curl wget jq;
-        
-        # Install packages from inventory.json dynamically
-        log_info "[Desktop] Installing packages from inventory.json...";
-        
-        # Load packages from inventory.json
-        if get_inventory_apt_packages; then
-            log_info "Installing ${#INVENTORY_PACKAGES[@]} packages from inventory.json...";
-            
-            # Install packages in batches to avoid command line length limits
-            local batch_size=20;
-            local total=${#INVENTORY_PACKAGES[@]};
-            local installed=0;
-            
-            for ((i=0; i<total; i+=batch_size)); do
-                local batch=("${INVENTORY_PACKAGES[@]:$i:$batch_size}");
-                log_info "Installing batch $((i/batch_size + 1)): ${batch[*]}";
-                
-                # Filter out already installed packages to avoid unnecessary operations
-                local to_install=();
-                for pkg in "${batch[@]}"; do
-                    if ! is_apt_installed "$pkg"; then
-                        to_install+=("$pkg");
-                    fi;
-                done;
-                
-                if [[ ${#to_install[@]} -gt 0 ]]; then
-                    apt install -y "${to_install[@]}" || log_warning "Some packages in batch failed to install: ${to_install[*]}";
-                    installed=$((installed + ${#to_install[@]}));
-                else
-                    log_info "All packages in batch already installed";
-                fi;
-            done;
-            
-            log_success "Installed $installed new packages from inventory.json";
-            
-            # Ensure cpu-x is specifically included
-            if ! is_apt_installed "cpu-x"; then
-                log_info "Installing cpu-x specifically from inventory...";
-                apt install -y cpu-x || log_warning "Failed to install cpu-x";
-            else
-                log_info "cpu-x already installed";
-            fi;
-        else
-            # Fallback to hardcoded list if inventory.json fails
-            log_warning "Using fallback package list";
-            apt install -y neofetch diodon cpu-x || log_warning "Some fallback packages failed to install";
-        fi;
-        
-        # Install Plex Media Server (requires special handling)
-        log_info "[Desktop] Installing Plex Media Server...";
-        if ! dpkg -l | grep -q "plex\|plexmediaserver"; then
-            # Add Plex repository
-            curl -fsSL https://downloads.plex.tv/plex-keys/PlexSign.key | gpg --dearmor -o /usr/share/keyrings/plex.gpg;
-            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" > /etc/apt/sources.list.d/plexmediaserver.list;
-            apt update;
-            apt install -y plexmediaserver || log_warning "Failed to install Plex Media Server";
-            log_success "Plex Media Server installed";
-        else
-            log_info "Plex Media Server already installed";
-        fi;
-
-        log_success "Essential APT packages installed successfully";
-    fi;
-
-    # Install Snap packages - FIXED: Proper formatting
-    if should_run_section "Snap"; then
-        log_info "📦 [Snap] Installing Snap packages...";
-    fi;
-
-    if should_run_section "Snap"; then
-        if ! is_snap_installed "bare"; then
-            snap install bare --stable;
-            log_success "Installed snap: bare";
-        fi;
-
-        if ! is_snap_installed "desktop-security-center"; then
-            snap install desktop-security-center --stable;
-            log_success "Installed snap: desktop-security-center";
-        fi;
-
-        if ! is_snap_installed "firmware-updater"; then
-            snap install firmware-updater --stable;
-            log_success "Installed snap: firmware-updater";
-        fi;
-
-        if ! is_snap_installed "gh"; then
-            snap install gh --stable;
-            log_success "Installed snap: gh";
-        fi;
-
-        if ! is_snap_installed "gnome-42-2204"; then
-            snap install gnome-42-2204 --stable;
-            log_success "Installed snap: gnome-42-2204";
-        fi;
-
-        if ! is_snap_installed "gtk-common-themes"; then
-            snap install gtk-common-themes --stable;
-            log_success "Installed snap: gtk-common-themes";
-        fi;
-
-        if ! is_snap_installed "prompting-client"; then
-            snap install prompting-client --stable;
-            log_success "Installed snap: prompting-client";
-        fi;
-
-        if ! is_snap_installed "qmmp"; then
-            snap install qmmp --stable;
-            log_success "Installed snap: qmmp";
-        fi;
-
-        if ! is_snap_installed "snap-store"; then
-            snap install snap-store --stable;
-            log_success "Installed snap: snap-store";
-        fi;
-
-        if ! is_snap_installed "snapd-desktop-integration"; then
-            snap install snapd-desktop-integration --stable;
-            log_success "Installed snap: snapd-desktop-integration";
-        fi;
-    fi;
-
-    # Install Python packages - FIXED: System-wide installation
-    if should_run_section "Python"; then
-        log_info "🐍 [Python] Installing Python packages system-wide...";
-
-        # Create temporary requirements file with essential packages only
-        cat > /tmp/bootstrap_requirements.txt << 'EOF'
-# Essential Python packages
-requests==2.32.3
-urllib3==2.3.0
-certifi==2025.1.31
-cryptography==43.0.0
-pydantic==2.11.7
-click==8.1.8
-rich==13.9.4
-numpy==2.2.3
-packaging==24.2
-setuptools-scm
-wheel
-pip
-EOF
-
-        # Install packages system-wide using --break-system-packages flag
-        log_info "Installing Python packages system-wide (breaking system package isolation)...";
-        pip3 install -r /tmp/bootstrap_requirements.txt --break-system-packages;
-        rm /tmp/bootstrap_requirements.txt;
-        log_success "Essential Python packages installed system-wide";
-    fi;
-
-    # Apply custom sysctl settings - FIXED: Proper formatting
-    if should_run_section "Sysctl"; then
-        log_info "⚙️ [Sysctl] Applying custom sysctl settings...";
-    fi;
-
-    if should_run_section "Sysctl"; then
-        cat > /etc/sysctl.d/99-bootstrap.conf << 'EOF'
-# Custom sysctl settings restored by bootstrap
-vm.swappiness = 60
-fs.inotify.max_user_watches = 65536
-net.core.somaxconn = 4096
-kernel.shmmax = 18446744073692774399
-EOF
-
-        sysctl -p /etc/sysctl.d/99-bootstrap.conf;
-        log_success "Applied 4 sysctl settings";
-    fi;
-
-    # Restore .bashrc customizations - FIXED: Proper formatting
-    if should_run_section "Bashrc"; then
-        log_info "🐚 [Bashrc] Restoring .bashrc customizations...";
-    fi;
-
-    if should_run_section "Bashrc"; then
-        # Add safe customizations
-        echo 'export gmail_sender_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
-        echo 'export gmail_recipient_email=your-email@gmail.com' >> "$USER_HOME/.bashrc";
-        echo 'if ! command -v code &> /dev/null; then' >> "$USER_HOME/.bashrc";
-        echo 'if command -v code-insiders &> /dev/null; then' >> "$USER_HOME/.bashrc";
-        echo 'alias code=code-insiders' >> "$USER_HOME/.bashrc";
-        echo 'fi' >> "$USER_HOME/.bashrc";
-        echo 'fi' >> "$USER_HOME/.bashrc";
-    fi;
-
-    # Note: Encrypted secrets are now restored early in the bootstrap process
-    
-    log_success ".bashrc customizations restored";
-
-    # Install custom services - FIXED: Proper formatting
-    log_info "🔧 Installing custom services...";
-
-    # Install GridShift - Automated Media Download Manager
-    log_info "Installing GridShift from GitHub...";
-    
-    # Check GitHub CLI authentication status before using gh commands
-    log_info "Checking GitHub CLI authentication...";
-    if ! sudo -u "$TARGET_USER" gh auth status >/dev/null 2>&1; then
-        log_warning "GitHub CLI not authenticated. Attempting to authenticate...";
-        log_info "Please complete GitHub authentication when prompted:";
-        if sudo -u "$TARGET_USER" gh auth login --web; then
-            log_success "GitHub CLI authentication completed";
-        else
-            log_warning "GitHub CLI authentication failed - repository cloning may not work";
-        fi;
-    else
-        log_success "GitHub CLI already authenticated";
-    fi;
-    
-    # Create installation directory
-    GRIDSHIFT_DIR="/opt/gridshift";
-    mkdir -p "$GRIDSHIFT_DIR";
-    chown "$TARGET_USER:$TARGET_USER" "$GRIDSHIFT_DIR";
-    
-    # Check if repository exists before cloning
-    if [[ ! -d "$GRIDSHIFT_DIR/.git" ]]; then
-        # Clone GridShift repository using gh
-        sudo -u "$TARGET_USER" gh repo clone mcollard0/gridshift "$GRIDSHIFT_DIR" || {
-            log_warning "GridShift repository not accessible - skipping installation";
-        };
-    fi;
-    
-    if [[ -d "$GRIDSHIFT_DIR/.git" ]]; then
-        cd "$GRIDSHIFT_DIR";
-        
-        # Set up Python virtual environment
-        log_info "Setting up Python virtual environment for GridShift...";
-        sudo -u "$TARGET_USER" python3 -m venv "$GRIDSHIFT_DIR/venv";
-        
-        # Install Python dependencies if requirements.txt exists
-        if [[ -f "$GRIDSHIFT_DIR/requirements.txt" ]]; then
-            sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install --upgrade pip;
-            sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install -r "$GRIDSHIFT_DIR/requirements.txt";
-        fi;
-        
-        # Install pyload-ng for download management
-        sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/pip" install pyload-ng;
-        
-        # Test the installation if test file exists
-        if [[ -f "$GRIDSHIFT_DIR/test_setup.py" ]]; then
-            if sudo -u "$TARGET_USER" "$GRIDSHIFT_DIR/venv/bin/python" "$GRIDSHIFT_DIR/test_setup.py"; then
-                log_success "GridShift installed successfully";
-            else
-                log_warning "GridShift installation test failed - check logs";
-            fi;
-        else
-            log_success "GridShift basic installation completed";
-        fi;
-        
-        # Create convenient aliases in .bashrc
-        echo 'alias gridshift="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu"' >> "$USER_HOME/.bashrc";
-        echo 'alias gridshift-daemon="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu daemon"' >> "$USER_HOME/.bashrc";
-        echo 'alias gridshift-monitor="cd /opt/gridshift && source venv/bin/activate && python -m src.cli.menu monitor"' >> "$USER_HOME/.bashrc";
-        
-        log_info "GridShift aliases added to .bashrc";
-        log_info "Use 'gridshift' command to access the interactive menu";
-        log_info "Use 'gridshift-daemon' to start automation";
-        log_info "Use 'gridshift-monitor' for real-time monitoring";
-    fi;
-    
-    log_success "Custom services installation completed";
-
-    # Restore SSH keys and configuration - FIXED: Proper formatting
-    if should_run_section "SSH"; then
-        log_info "🔑 [SSH] Restoring SSH keys and configuration...";
-    fi;
-
-    if should_run_section "SSH"; then
-        # Create .ssh directory with proper permissions
-        sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.ssh";
-        chmod 700 "$USER_HOME/.ssh";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";
-    fi;
-
-    # SSH keys and other files are now automatically restored via file decryption
-    log_info "SSH keys and configuration files restored automatically from encrypted files";
-    
-    # Add fallback public keys if they exist in the old system (backup measure)
-    if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519.pub" ]]; then
-        cp "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.ssh/id_ed25519.pub" "$USER_HOME/.ssh/id_ed25519.pub.backup";
-        chmod 644 "$USER_HOME/.ssh/id_ed25519.pub.backup";
-        chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub.backup";
-        log_info "Backed up old system public key as .pub.backup";
-    fi;
-
-    log_success "SSH configuration restored";
-    
-    # Run any registered post-step scripts for SSH
-    run_post_step_scripts "SSH";
-
-    # Restore git configuration
-    if should_run_section "Git"; then
-        log_info "🔧 [Git] Configuring git user identity...";
-    fi;
-    
-    if should_run_section "Git"; then
-        # Try to get git config from decrypted secrets first (if they exist)
-        GIT_USER_EMAIL="";
-        GIT_USER_NAME="";
-    fi;
-    
-    # Check if .gitconfig was restored from encrypted secrets
-    if [[ -f "$USER_HOME/.gitconfig" ]]; then
-        log_success "Git configuration restored from encrypted .gitconfig file";
-        # Extract values from restored .gitconfig for display
-        GIT_USER_EMAIL=$(sudo -u "$TARGET_USER" git config --get user.email 2>/dev/null || echo "");
-        GIT_USER_NAME=$(sudo -u "$TARGET_USER" git config --get user.name 2>/dev/null || echo "");
-        if [[ -n "$GIT_USER_EMAIL" && -n "$GIT_USER_NAME" ]]; then
-            log_success "Git configured: $GIT_USER_NAME <$GIT_USER_EMAIL>";
-        fi;
-    else
-        # Check if git config is available in environment variables (from decrypted secrets)
-        if [[ -n "${git_user_email:-}" && -n "${git_user_name:-}" ]]; then
-            GIT_USER_EMAIL="$git_user_email";
-            GIT_USER_NAME="$git_user_name";
-            log_info "Using git config from decrypted environment variables";
-        else
-            # Final fallback to old system git config if available
-            if [[ -f "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" ]]; then
-                GIT_USER_EMAIL=$(grep -E '^\s*email\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
-                GIT_USER_NAME=$(grep -E '^\s*name\s*=' "/media/michael/471255ba-f948-4ddf-9dc5-3284f916144a/home/michael/.gitconfig" | sed 's/.*=\s*//' | tr -d '\t\n\r' || echo "");
-                log_info "Using git config from old system backup";
-            fi;
-        fi;
-        
-        # Set git configuration if we found it via environment/fallback
-        if [[ -n "$GIT_USER_EMAIL" && -n "$GIT_USER_NAME" ]]; then
-            sudo -u "$TARGET_USER" git config --global user.email "$GIT_USER_EMAIL";
-            sudo -u "$TARGET_USER" git config --global user.name "$GIT_USER_NAME";
-            log_success "Git configured: $GIT_USER_NAME <$GIT_USER_EMAIL>";
-        else
-            log_warning "No git configuration found - please set manually with: git config --global user.email/user.name";
-        fi;
-    fi;
-    
-    # Run any registered post-step scripts for Git
-    run_post_step_scripts "Git";
-
-    # Install missing applications from inventory
-    if should_run_section "Apps"; then
-        log_info "📦 [Apps] Installing missing applications from inventory...";
-    fi;
-    
-    # Install prerequisites first (after SSH keys are restored)
-    log_info "Installing prerequisites for custom applications...";
-    
-    # Install 1Password
-    log_info "Installing 1Password...";
-    if ! command -v 1password &> /dev/null; then
-        # Add 1Password repository key
-        curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg;
-        # Add 1Password repository
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" > /etc/apt/sources.list.d/1password.list;
-        # Update and install
-        apt update;
-        apt install -y 1password || log_warning "Failed to install 1Password";
-        log_success "1Password installed";
-    else
-        log_info "1Password already installed";
-    fi;
-    
-    # Install VS Code Insiders
-    log_info "Installing VS Code Insiders...";
-    if ! command -v code-insiders &> /dev/null; then
-        # Add Microsoft repository key
-        curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --output /usr/share/keyrings/microsoft-archive-keyring.gpg;
-        # Add VS Code Insiders repository
-        echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list;
-        # Update and install
-        apt update;
-        apt install -y code-insiders || log_warning "Failed to install VS Code Insiders";
-        log_success "VS Code Insiders installed";
-    else
-        log_info "VS Code Insiders already installed";
-    fi;
-    
-    # Install Zoom (via snap)
-    log_info "Installing Zoom...";
-    if ! is_snap_installed "zoom"; then
-        snap install zoom || log_warning "Failed to install Zoom via snap";
-        log_success "Zoom installed";
-    else
-        log_info "Zoom already installed";
-    fi;
-    
-    # Build and install Whatsie
-    log_info "Building Whatsie from source...";
-    WHATSIE_DIR="/opt/whatsie";
-    
-    # Install build prerequisites for Qt-based Whatsie (Qt5)
-    apt install -y build-essential qtbase5-dev qtwebengine5-dev qtwebengine5-dev-tools libx11-dev libx11-xcb-dev qt5-qmake || {
-        log_warning "Failed to install Whatsie build dependencies - skipping Whatsie build";
-    };
-    
-    # Only proceed if prerequisites installed successfully
-    if command -v cmake &> /dev/null && command -v qmake6 &> /dev/null; then
-        mkdir -p "$WHATSIE_DIR";
-        chown "$TARGET_USER:$TARGET_USER" "$WHATSIE_DIR";
-        
-        # Clone Whatsie if not already cloned
-        if [[ ! -d "$WHATSIE_DIR/.git" ]]; then
-            # Ensure the parent directory has correct permissions for optdev group
-            if [[ ! -d "$WHATSIE_DIR" ]]; then
-                mkdir -p "$WHATSIE_DIR";
-                chown "$TARGET_USER:$TARGET_USER" "$WHATSIE_DIR";
-            fi;
-            
-            sudo -u "$TARGET_USER" git clone https://github.com/keshavbhatt/whatsie.git "$WHATSIE_DIR" || {
-                log_warning "Failed to clone Whatsie repository - skipping build";
-            };
-        fi;
-        
-        # Build Whatsie if source available
-        if [[ -d "$WHATSIE_DIR/.git" ]]; then
-            cd "$WHATSIE_DIR/src";
-            
-            # Add Qt5 tools to PATH for build
-            export PATH="/usr/lib/qt5/bin:/usr/lib/x86_64-linux-gnu/qt5/bin:$PATH";
-            
-            # Configure with qmake (Qt5)
-            if sudo -u "$TARGET_USER" PATH="$PATH" qmake; then
-                # Build with multiple cores
-                if sudo -u "$TARGET_USER" PATH="$PATH" make -j$(nproc); then
-                    # Install the binary
-                    cp whatsie /usr/local/bin/ || {
-                        log_warning "Failed to install Whatsie binary to /usr/local/bin";
-                    };
-                    
-                    # Create desktop entry
-                    cat > /usr/share/applications/whatsie.desktop << 'EOF'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Whatsie
-Comment=Feature rich WhatsApp web client
-Exec=/usr/local/bin/whatsie
-Icon=whatsapp
-Terminal=false
-Categories=Network;InstantMessaging;
-EOF
-                    log_success "Whatsie built and installed successfully";
-                else
-                    log_warning "Failed to build Whatsie";
-                fi;
-            else
-                log_warning "Failed to configure Whatsie with qmake";
-            fi;
-        fi;
-    fi;
-    
-    # Build and install NoiseTorch (real-time microphone noise suppression)
-    log_info "Building NoiseTorch from source...";
-    NOISETORCH_DIR="/opt/noisetorch";
-    
-    # Install Go if not already available
-    if ! command -v go &> /dev/null; then
-        apt install -y golang-go;
-        log_success "Go compiler installed for NoiseTorch build";
-    fi;
-    
-    # Only proceed if Go is available
-    if command -v go &> /dev/null; then
-        mkdir -p "$NOISETORCH_DIR";
-        chown "$TARGET_USER:$TARGET_USER" "$NOISETORCH_DIR";
-        
-        # Clone NoiseTorch if not already cloned
-        if [[ ! -d "$NOISETORCH_DIR/.git" ]]; then
-            sudo -u "$TARGET_USER" gh repo clone noisetorch/NoiseTorch "$NOISETORCH_DIR" || {
-                log_warning "Failed to clone NoiseTorch repository - skipping build";
-            };
-        fi;
-        
-        # Build NoiseTorch if source available
-        if [[ -d "$NOISETORCH_DIR/.git" ]]; then
-            cd "$NOISETORCH_DIR";
-            
-            # Build with make
-            if sudo -u "$TARGET_USER" make; then
-                # Install to user's local bin (as recommended by NoiseTorch)
-                sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local/bin";
-                sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local/share/applications";
-                sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local/share/icons/hicolor/256x256/apps";
-                
-                # Copy binary and assets
-                sudo -u "$TARGET_USER" cp "./bin/noisetorch" "$USER_HOME/.local/bin/" || {
-                    log_warning "Failed to copy NoiseTorch binary";
-                };
-                
-                sudo -u "$TARGET_USER" cp "./assets/noisetorch.desktop" "$USER_HOME/.local/share/applications/" || {
-                    log_warning "Failed to copy NoiseTorch desktop file";
-                };
-                
-                sudo -u "$TARGET_USER" cp "./assets/icon/noisetorch.png" "$USER_HOME/.local/share/icons/hicolor/256x256/apps/" || {
-                    log_warning "Failed to copy NoiseTorch icon";
-                };
-                
-                # Update desktop database
-                sudo -u "$TARGET_USER" update-desktop-database "$USER_HOME/.local/share/applications" 2>/dev/null || true;
-                
-                log_success "NoiseTorch built and installed successfully (real-time noise suppression)";
-            else
-                log_warning "Failed to build NoiseTorch";
-            fi;
-        fi;
-    else
-        log_warning "Go compiler not available - skipping NoiseTorch build";
-    fi;
-    
-    log_success "Missing applications installation completed";
-
-    # Configure keyboard shortcuts
-    if should_run_section "Keyboard"; then
-        log_info "⌨️  [Keyboard] Configuring custom keyboard shortcuts...";
-        
-        # Run any registered post-step scripts for keyboard configuration
-        run_post_step_scripts "Keyboard";
-        
-        log_success "Keyboard configuration completed";
-    fi;
-
-    # Restore cron jobs - FIXED: Proper formatting
-    if should_run_section "Cron"; then
-        log_info "⏰ [Cron] Restoring cron jobs...";
-    fi;
-
-    if should_run_section "Cron"; then
-        # Create temporary crontab file
-        cat > /tmp/bootstrap_crontab << 'EOF'
-MAILTO=""
-PATH=/usr/local/bin:/usr/bin:/bin
-HOME=/home/michael
-0 3 * * * cd $HOME && python3 KCRestaurants.py --ephemeral >> $HOME/logs/kc_restaurants/kc_$(date +\%F).log 2>&1
-EOF
-
-        # Install crontab for target user
-        sudo -u "$TARGET_USER" crontab /tmp/bootstrap_crontab;
-        rm /tmp/bootstrap_crontab;
-        log_success "Restored cron jobs";
-        
-        # Run any registered post-step scripts for Cron
-        run_post_step_scripts "Cron";
-    fi;
-
-    # Remove Firefox if installed (moved to end to avoid interference with installations)
-    log_info "🦊 [Firefox] Removing Firefox browser...";
-    if is_snap_installed "firefox"; then
-        log_warning "Removing Firefox snap package...";
-        snap remove firefox;
-        log_success "Firefox snap removed";
-    fi;
-    
-    if is_apt_installed "firefox"; then
-        log_warning "Removing Firefox APT package...";
-        apt remove --purge -y firefox firefox-esr;
-        apt autoremove -y;
-        log_success "Firefox APT package removed";
-    fi;
-    
-    # Final steps and completion
-    if should_run_section "Cleanup"; then
-        log_info "🧹 [Cleanup] Performing final cleanup...";
-        apt autoremove -y;
-        apt autoclean;
-    fi;
+    log_success ".bashrc customizations restored";\n\n    # No custom services to install\n\n    # Restore SSH keys and configuration\n    log_info "🔑 Restoring SSH keys and configuration...";\n\n    # Create .ssh directory with proper permissions\n    sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.ssh";\n    chmod 700 "$USER_HOME/.ssh";\n    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh";\n\n    # Note: Private key id_ed25519 needs to be manually restored\n    log_warning "Private key id_ed25519 must be manually restored for security";\n\n    # Restore id_ed25519.pub\n    cat > "$USER_HOME/.ssh/id_ed25519.pub" << 'EOF'\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKsCLUll8fV8DmFE/eDtmjBE/mO/R4nVAQHMFW273fWo michael@github-memento\nEOF\n    chmod 644 "$USER_HOME/.ssh/id_ed25519.pub";\n    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/id_ed25519.pub";\n\n    # Restore config\n    cat > "$USER_HOME/.ssh/config" << 'EOF'\n# GitLab SystemRescue USB Writer project
+Host gitlab.com-systemrescue
+  HostName gitlab.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_gitlab
+  IdentitiesOnly yes\nEOF\n    chmod 600 "$USER_HOME/.ssh/config";\n    chown "$TARGET_USER:$TARGET_USER" "$USER_HOME/.ssh/config";\n\n    log_success "SSH configuration restored";\n\n    # Restore cron jobs\n    log_info "⏰ Restoring cron jobs...";\n\n    # Create temporary crontab file\n    cat > /tmp/bootstrap_crontab << 'EOF'\nMAILTO=""\nPATH=/usr/local/bin:/usr/bin:/bin\nHOME=/home/michael\n0 3 * * * cd $HOME && python3 KCRestaurants.py --ephemeral >> $HOME/logs/kc_restaurants/kc_$(date +\%F).log 2>&1\n0 9 * * * /ARCHIVE/Programming/quiet_smart/venv/bin/python /ARCHIVE/Programming/quiet_smart/quiet_smart.py >> /ARCHIVE/Programming/quiet_smart/cron.log 2>&1 # quiet_smart_monitor\n1 4 * * * cd /ARCHIVE/Programming/btfd && /ARCHIVE/Programming/btfd/venv/bin/python /ARCHIVE/Programming/btfd/run_scanner.py --max-signals 15 >> /ARCHIVE/Programming/btfd/logs/btfd_daily_$(date +\%F).log 2>&1\n0 2 1 * * /ARCHIVE/Programming/backup_root_partition/backup_system.sh -d /dev/nvme2n1p1 -u ffd5fbb5-89f8-4287-af40-534eef65842e -m /mnt/ubuntu_backup >> /ARCHIVE/Programming/backup_root_partition/cron.log 2>&1\n@reboot sleep 60 && /ARCHIVE/Programming/system_monitor/venv/bin/python /ARCHIVE/Programming/system_monitor/gpu_crash_monitor.py --daemon >> /ARCHIVE/Programming/system_monitor/log/cron.log 2>&1\n*/5 * * * * /ARCHIVE/Programming/system_monitor/check_monitor_running.sh\nEOF\n\n    # Install crontab for target user\n    sudo -u "$TARGET_USER" crontab /tmp/bootstrap_crontab;\n    rm /tmp/bootstrap_crontab;\n    log_success "Restored 9 cron jobs";\n\n    # Final steps and completion
+    log_info "🧹 Performing final cleanup...";
+    apt autoremove -y;
+    apt autoclean;
     
     log_success "🎉 Ubuntu Bootstrap restoration completed successfully!";
     log_info "📝 Summary of changes:";
