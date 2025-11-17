@@ -14,6 +14,7 @@ import subprocess;
 import socket;
 import datetime;
 import shutil;
+import argparse;
 from pathlib import Path;
 from typing import Dict, List, Any, Optional, Tuple;
 
@@ -640,13 +641,41 @@ class UbuntuSystemScanner:
 
 def main():
     """Main scanner execution."""
+    parser = argparse.ArgumentParser(
+        description='Ubuntu Bootstrap System Scanner - Create system inventory',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Examples:\n  python3 bootstrap_scanner.py\n  python3 bootstrap_scanner.py --dry-run\n  python3 bootstrap_scanner.py --dry-run --output-dir /home/user/test'
+    );
+    
+    parser.add_argument( '--dry-run', action='store_true', help='Dry run mode: extract settings without modifying project directory (outputs to /tmp/bootstrap)' );
+    parser.add_argument( '--output-dir', type=str, default=None, help='Custom output directory (only used with --dry-run)' );
+    parser.add_argument( '--no-encrypt', action='store_true', help='Skip encryption of sensitive data (useful for testing)' );
+    
+    args = parser.parse_args();
+    
     print( "🚀 Ubuntu Bootstrap System Scanner" );
     print( "=====================================\n" );
     
-    scanner = UbuntuSystemScanner();
+    # Determine base directory
+    if args.dry_run:
+        base_dir = args.output_dir if args.output_dir else '/tmp/bootstrap';
+        print( f"🔍 DRY RUN MODE ENABLED" );
+        print( f"   Output directory: {base_dir}" );
+        print( f"   (Project directory will not be modified)\n" );
+        
+        # Create output directory structure
+        Path( base_dir ).mkdir( parents=True, exist_ok=True );
+        Path( base_dir, 'data' ).mkdir( exist_ok=True );
+        Path( base_dir, 'scripts' ).mkdir( exist_ok=True );
+        Path( base_dir, 'backup' ).mkdir( exist_ok=True );
+        
+        scanner = UbuntuSystemScanner( base_dir=base_dir );
+    else:
+        scanner = UbuntuSystemScanner();
     
     # Create inventory
-    inventory = scanner.create_inventory( encrypt_sensitive=True );
+    encrypt = not args.no_encrypt;
+    inventory = scanner.create_inventory( encrypt_sensitive=encrypt );
     
     # Save to file
     inventory_path = scanner.save_inventory( inventory );
@@ -662,10 +691,20 @@ def main():
     print( f"   Keyboard shortcuts: {len(inventory['system_config']['keyboard_shortcuts'])}" );
     print( f"   Encrypted secrets: {len(inventory['encrypted_refs'])}" );
     
-    print( f"\n💡 Next steps:" );
-    print( f"   1. Run: python3 src/generate_bootstrap.py" );
-    print( f"   2. Review generated scripts/bootstrap.sh" );
-    print( f"   3. Test on a clean Ubuntu system" );
+    if args.dry_run:
+        print( f"\n✅ Dry run completed successfully!" );
+        print( f"   Output saved to: {base_dir}" );
+        print( f"\n💡 Dry run results can be used to:" );
+        print( f"   • Preview what would be extracted from this system" );
+        print( f"   • Test bootstrap configuration on a new computer" );
+        print( f"   • Share settings without modifying your main bootstrap project" );
+        print( f"\n💡 To generate bootstrap script from dry run:" );
+        print( f"   python3 src/generate_bootstrap.py --input-dir {base_dir}" );
+    else:
+        print( f"\n💡 Next steps:" );
+        print( f"   1. Run: python3 src/generate_bootstrap.py" );
+        print( f"   2. Review generated scripts/bootstrap.sh" );
+        print( f"   3. Test on a clean Ubuntu system" );
 
 
 if __name__ == '__main__':
