@@ -66,6 +66,7 @@ bootstrap/
 │   └── setup_cron.sh       # Cron job management
 ├── docs/                   # Documentation
 │   ├── architecture.md     # System architecture details
+│   ├── DRY_RUN_GUIDE.md   # Dry run mode guide
 │   ├── CONTRIBUTING.md     # Development guidelines
 │   └── TESTING.md         # VM testing procedures
 ├── data/                   # System inventory and encrypted data
@@ -101,6 +102,28 @@ python3 src/generate_bootstrap.py
 sudo ./scripts/bootstrap.sh
 ```
 *Restores complete system configuration (prompts for master password)*
+
+## 🧪 Dry Run Mode
+
+Extract settings without modifying your project directory - perfect for testing or setting up a new computer:
+
+```bash
+# Extract settings to /tmp/bootstrap (default)
+python3 src/bootstrap_scanner.py --dry-run
+
+# Generate bootstrap script from dry run
+python3 src/generate_bootstrap.py --dry-run
+
+# Custom output directory
+python3 src/bootstrap_scanner.py --dry-run --output-dir /home/user/test-bootstrap
+python3 src/generate_bootstrap.py --input-dir /home/user/test-bootstrap
+```
+
+**Use cases:**
+- Preview what would be extracted from a system
+- Test configuration changes without affecting your main bootstrap project
+- Extract settings on a new computer before committing
+- Share bootstrap configuration with teammates
 
 ## 🧪 Testing
 
@@ -262,6 +285,7 @@ sudo ./scripts/bootstrap.sh
 
 ### Documentation
 - [Architecture](docs/architecture.md) - System design and schemas
+- [Dry Run Guide](docs/DRY_RUN_GUIDE.md) - Non-invasive testing and extraction
 - [Testing Guide](docs/TESTING.md) - VM testing procedures  
 - [Contributing](docs/CONTRIBUTING.md) - Development guidelines
 

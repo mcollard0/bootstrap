@@ -92,6 +92,9 @@ N/A - This is a local system tool without network APIs.
 - Keyboard shortcuts scanning and inventory capture
 - Display server detection and configuration system (Wayland/X11)
 - Safe X11 configuration without immediate GUI restart
+- Dry run mode for non-invasive testing and extraction
+- Command-line argument parsing with argparse
+- Custom output directory support
 
 ### 🚧 In Progress
 - Crypto utilities implementation
@@ -123,6 +126,13 @@ N/A - This is a local system tool without network APIs.
 2. **Memory safety**: Secrets cleared from memory after use
 3. **Password prompting**: Interactive password entry during restoration
 4. **No plaintext storage**: Secrets never stored in plaintext in repo
+
+### Dry Run Mode
+1. **Non-invasive operation**: Reads system state without modifying project directory
+2. **Default location**: `/tmp/bootstrap` for temporary extraction
+3. **Custom directories**: Supports `--output-dir` for user-specified locations
+4. **Directory structure**: Automatically creates `data/`, `scripts/`, and `backup/` subdirectories
+5. **Use cases**: Testing, new computer setup, preview before commit, sharing configurations
 
 ## Current Migrations
 

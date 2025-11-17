@@ -11,6 +11,7 @@ import os;
 import json;
 import base64;
 import datetime;
+import argparse;
 from pathlib import Path;
 from typing import Dict, List, Any, Optional;
 
@@ -719,10 +720,33 @@ main "$@";
 
 def main():
     """Main generator execution."""
+    parser = argparse.ArgumentParser(
+        description='Ubuntu Bootstrap Script Generator - Generate restoration script',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Examples:\n  python3 generate_bootstrap.py\n  python3 generate_bootstrap.py --input-dir /tmp/bootstrap\n  python3 generate_bootstrap.py --dry-run'
+    );
+    
+    parser.add_argument( '--dry-run', action='store_true', help='Dry run mode: read from /tmp/bootstrap and write output there' );
+    parser.add_argument( '--input-dir', type=str, default=None, help='Custom input directory to read inventory from' );
+    parser.add_argument( '--output-dir', type=str, default=None, help='Custom output directory for generated script' );
+    
+    args = parser.parse_args();
+    
     print( "🚀 Ubuntu Bootstrap Script Generator" );
     print( "====================================\\n" );
     
-    generator = BootstrapScriptGenerator();
+    # Determine base directory
+    if args.dry_run:
+        base_dir = '/tmp/bootstrap';
+        print( f"🔍 DRY RUN MODE ENABLED" );
+        print( f"   Reading from: {base_dir}" );
+        print( f"   Output to: {base_dir}/scripts\n" );
+        generator = BootstrapScriptGenerator( base_dir=base_dir );
+    elif args.input_dir:
+        print( f"📂 Using custom input directory: {args.input_dir}" );
+        generator = BootstrapScriptGenerator( base_dir=args.input_dir );
+    else:
+        generator = BootstrapScriptGenerator();
     
     # Load inventory and encrypted secrets
     try:
@@ -749,10 +773,16 @@ def main():
         print( f"   Cron jobs: {len(system_config.get('cron_jobs', []))}" );
         print( f"   Encrypted secrets: {len(inventory.get('encrypted_refs', []))}" );
         
-        print( f"\\n💡 Next steps:" );
-        print( f"   1. Review the generated script: {script_path}" );
-        print( f"   2. Test on a clean Ubuntu 25.04 system" );
-        print( f"   3. Run with: sudo ./scripts/bootstrap.sh" );
+        if args.dry_run or args.input_dir:
+            print( f"\\n✅ Generation completed successfully!" );
+            print( f"   Script saved to: {script_path}" );
+            print( f"\\n💡 To use this script:" );
+            print( f"   sudo {script_path}" );
+        else:
+            print( f"\\n💡 Next steps:" );
+            print( f"   1. Review the generated script: {script_path}" );
+            print( f"   2. Test on a clean Ubuntu 25.04 system" );
+            print( f"   3. Run with: sudo ./scripts/bootstrap.sh" );
         
     except Exception as e:
         print( f"❌ Error generating bootstrap script: {e}" );
