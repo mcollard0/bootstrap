@@ -249,6 +249,9 @@ EOF
     # Warp Terminal (preview version)
     if ! is_apt_installed "warp-terminal-preview"; then
         log_info "Installing Warp Terminal...";
+        curl -LO https://app.warp.dev/download?package=deb&build=preview
+        sudo dpkg -i warp-terminal_preview_*.deb
+        sudo apt install -f  # Resolve deps
         curl -fsSL https://releases.warp.dev/linux/keys/warp.asc | gpg --dearmor -o /usr/share/keyrings/warp.gpg;
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/warp.gpg] https://releases.warp.dev/linux/deb stable main" > /etc/apt/sources.list.d/warp.list;
         apt update;
