@@ -65,3 +65,33 @@ In Linux shells (Bash, Zsh, Fish), certain characters are interpreted as syntact
 
 - **The Danger**: In disaster recovery drills using a Live ISO, all changes reside in volatile RAM (`tmpfs`/`overlayfs`). Rebooting the VM wipes all state unless the OS has been installed to the virtual disk via Calamares.
 - **The Solution**: If testing reboots of a live environment, keep the ISO permanently mounted in the virtual CD-ROM tray so the UEFI firmware doesn't drop into Tianocore device selection.
+
+---
+
+## 6. The Git `insteadOf` Disaster Recovery Trap
+
+- **The Danger**: Power users frequently add rewriting rules in `~/.gitconfig` to force SSH for all GitHub URLs:
+  ```gitconfig
+  [url "git@github.com:"]
+      insteadOf = https://github.com/
+  ```
+  When dotfiles are restored onto a freshly booted machine or Live rescue environment, Git immediately begins intercepting **all** HTTPS Git commands (including `git clone`, `git pull`, and AUR helper package sources) and rewriting them to `git@github.com:`. Because the rescue environment has no unlocked SSH agent or loaded keys, GitHub rejects all connections with `git@github.com: Permission denied (publickey)`. Even typing `git clone https://...` fails because Git silently rewrites it!
+- **The Solution**:
+  - `emergency_restore.py` automatically scans restored `.gitconfig` files and comments out `[url "git@github.com:"] insteadOf = https://github.com/`.
+  - Public open-source repositories and package downloads must remain anonymous and credential-free via HTTPS during recovery.
+  - SSH keys remain safely restored in `~/.ssh/` for personal use once the workstation is operational.
+
+---
+
+## 7. Live Environment Overlay Limits vs. Full Package Restores (Corrupted Shared Libraries)
+
+- **The Danger**:
+  - In Live ISO rescue environments, the root filesystem (`/`) is an in-memory `overlayfs` (`airootfs`) with a fixed space quota (typically 10 GB).
+  - A production developer machine inventory contains heavy toolkits (`cuda` at 4.7 GB, `ollama` at 1.0 GB, `dotnet-sdk` at 1.2 GB, `code` at 830 MB, `mingw-w64-gcc` at 1.2 GB, etc.), totaling **over 24.5 GB** uncompressed.
+  - Attempting to install all 200+ native packages into a Live ISO fills 100% of the 10 GB filesystem (`No space left on device`).
+  - When disk space is exhausted while `pacman` is unpacking dynamic libraries into `/usr/lib/`, the library files are left truncated at 0 or partial bytes with invalid ELF headers.
+  - Every subsequent program linking against that library (`sudo`, `sed`, `vim`, `bash`) fails with `[Errno 80] Accessing a corrupted shared library`, crippling the running shell.
+- **The Solution**:
+  - **Use Scope 2 (`Restore Configurations & Keys only`) in Live/Emergency Environments**: Scope 2 restores storage mounts, fstab, shells, SSH/GPG keys, desktop configs, fonts, and tunnels in under 5 seconds with zero risk of disk exhaustion.
+  - **Scope 1 (Full Package Restoration)** should only be performed on an installed OS with a physical NVMe/SSD drive mounted at `/`.
+
