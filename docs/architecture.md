@@ -38,6 +38,7 @@ bootstrap/
 │       └── rclone_backend.py       # Universal rclone integration with pre-flight checks
 ├── scripts/
 │   ├── run_backup.sh               # Master one-step backup launcher
+│   ├── setup_systemd.sh            # Setup periodic systemd service and timer
 │   ├── bootstrap.sh                # Main generated restoration script (with pacman -T checks)
 │   ├── add_secret.py               # Manage encrypted secrets and file storage
 │   ├── decrypt_secrets.py          # Decrypt and inspect environment variables

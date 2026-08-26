@@ -58,11 +58,12 @@ bootstrap/
 │       └── rclone_backend.py       # Universal rclone integration
 ├── scripts/
 │   ├── run_backup.sh               # Master one-step backup launcher
+│   ├── setup_systemd.sh            # Configure automated periodic systemd timer & service
 │   ├── bootstrap.sh                # Main generated restoration script
 │   ├── add_secret.py               # Manage encrypted secrets and file storage
 │   ├── decrypt_secrets.py          # Decrypt and inspect environment variables
 │   ├── git_auto_push.sh            # Automated git commit and push
-│   └── setup_cron.sh               # Automated backup scheduling
+│   └── setup_cron.sh               # Cron-based scheduler (for Ubuntu/Debian)
 ├── docs/
 │   ├── architecture.md             # System architecture & cryptographic specifications
 │   ├── DISASTER_RECOVERY.md        # Comprehensive root drive failure recovery guide
@@ -81,17 +82,36 @@ bootstrap/
 ```bash
 ./scripts/run_backup.sh
 ```
-*Prompts for your master password, scans your system, seals all configs into `bootstrap_vault_*.tar.enc`, and uploads to all active destinations.*
+*Prompts for your master password, scans your system, seals all configs into `bootstrap_vault_*.tar.zst.enc`, and uploads to all active destinations.*
 
-### 2. Configure Cloud Destinations
+### 2. Configure Automated Periodic Backups (Systemd Timer)
+On Arch Linux and modern systems without cron, set up a native systemd user timer:
+```bash
+# Interactive setup: prompts for SECRET and schedule (Weekly or Daily)
+./scripts/setup_systemd.sh
+
+# Or non-interactive setup:
+./scripts/setup_systemd.sh --weekly --secret "YourMasterSecret"
+
+# Check timer status anytime:
+./scripts/setup_systemd.sh --status
+```
+*Creates `~/.config/systemd/user/bootstrap-backup.service` (chmod 0600) and `bootstrap-backup.timer` with persistent catching up if the computer was asleep.*
+
+### 3. Verify Backup Vault Integrity
+```bash
+python3 src/verify.py --vault backup/bootstrap_vault_*.tar.zst.enc
+```
+
+### 4. Configure Cloud Destinations
 Edit `data/destinations.json` (or copy from `config/destinations.example.json`):
 - Enable **AWS S3 / R2**, **Google Drive**, **OneDrive**, or **Email (SMTP)**.
 - Re-run `./scripts/run_backup.sh` to sync across your clouds.
 
-### 3. Disaster Recovery (Fresh System or Replaced `/` Drive)
+### 5. Disaster Recovery (Fresh System or Replaced `/` Drive)
 ```bash
 # Unpack vault and restore fstab, fish/bash dotfiles, and SSH keys
-python3 src/restore.py --vault /path/to/bootstrap_vault_*.tar.enc
+python3 src/restore.py --vault /path/to/bootstrap_vault_*.tar.zst.enc
 
 # Reinstall all software packages in batch
 sudo ./scripts/bootstrap.sh

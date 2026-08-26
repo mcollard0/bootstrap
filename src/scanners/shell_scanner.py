@@ -168,12 +168,19 @@ class ShellScanner(BaseScanner):
                     for pattern, desc in self.SENSITIVE_PATTERNS:
                         match = re.search(pattern, line_clean, re.IGNORECASE)
                         if match:
+                            raw_val = match.group(0)
+                            # Mask sensitive string (e.g. sk-ant...XYZ)
+                            if len(raw_val) > 10:
+                                masked = raw_val[:6] + "..." + raw_val[-4:]
+                            else:
+                                masked = "***REDACTED***"
+
                             var_key = f"{prefix}_{file_path.stem}_L{line_num}"
                             secrets_dict[var_key] = {
                                 'file': str(file_path),
                                 'line_num': line_num,
                                 'description': desc,
-                                'raw_match': match.group(0)
+                                'preview': masked
                             }
         except Exception:
             pass

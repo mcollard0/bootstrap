@@ -2,6 +2,7 @@
 
 # Sensitive Data (never commit real secrets - use examples only)
 data/encrypted_secrets.json
+data/inventory.json
 data/master_password.txt  
 *.key
 *.pem
