@@ -108,6 +108,7 @@ main() {
     local custom_secret=""
     local schedule_calendar="Mon *-*-* 03:00:00" # Default: Every Monday at 3:00 AM
     local schedule_desc="Weekly on Monday at 3:00 AM"
+    local schedule_explicitly_set=false
 
     # Argument handling
     while [[ $# -gt 0 ]]; do
@@ -127,16 +128,19 @@ main() {
             --daily)
                 schedule_calendar="*-*-* 03:00:00"
                 schedule_desc="Daily at 3:00 AM"
+                schedule_explicitly_set=true
                 shift
                 ;;
             --weekly)
                 schedule_calendar="Mon *-*-* 03:00:00"
                 schedule_desc="Weekly on Monday at 3:00 AM"
+                schedule_explicitly_set=true
                 shift
                 ;;
             --schedule)
                 schedule_calendar="$2"
                 schedule_desc="Custom: $2"
+                schedule_explicitly_set=true
                 shift 2
                 ;;
             --help|-h)
@@ -185,8 +189,8 @@ main() {
         secret=$(prompt_secret)
     fi
 
-    # Select schedule if interactive and not specified via flags
-    if [[ -z "${1:-}" && -t 0 && "$schedule_desc" == "Weekly on Monday at 3:00 AM" ]]; then
+    # Select schedule if interactive and not explicitly specified via flags
+    if [[ "$schedule_explicitly_set" == false && -t 0 ]]; then
         echo -e "\nSelect backup schedule:"
         echo "  1) Weekly on Monday at 3:00 AM [Default]"
         echo "  2) Daily at 3:00 AM"
