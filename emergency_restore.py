@@ -145,6 +145,56 @@ def prompt_confirmation_with_countdown(timeout_seconds: int = 900) -> bool:
                 return False
 
 
+class TeeLogger:
+    """Duplicates all stdout and stderr output to both the interactive terminal and log files."""
+    def __init__(self, log_paths: List[Path], original_stream):
+        self.log_paths = log_paths
+        self.original_stream = original_stream
+        self.files = []
+        for lp in log_paths:
+            try:
+                lp.parent.mkdir(parents=True, exist_ok=True)
+                self.files.append(open(lp, 'a', encoding='utf-8', buffering=1))
+            except Exception:
+                pass
+
+    def write(self, data):
+        try:
+            self.original_stream.write(data)
+            self.original_stream.flush()
+        except Exception:
+            pass
+        if self.files:
+            try:
+                import re
+                clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', data)
+                for f in self.files:
+                    try:
+                        f.write(clean)
+                        f.flush()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    def flush(self):
+        try:
+            self.original_stream.flush()
+        except Exception:
+            pass
+        for f in self.files:
+            try:
+                f.flush()
+            except Exception:
+                pass
+
+    def isatty(self):
+        return getattr(self.original_stream, 'isatty', lambda: False)()
+
+    def fileno(self):
+        return getattr(self.original_stream, 'fileno', lambda: None)()
+
+
 class EmergencyRestorer:
     """Handles idempotent disaster recovery and restoration from an encrypted vault."""
 
@@ -716,6 +766,15 @@ def main():
     parser.add_argument('--list-backups', action='store_true', help="List local and archive backups")
 
     args = parser.parse_args()
+
+    # Initialize automatic dual-logging to emergency_restore.log and failure.txt
+    log_files = [
+        PROJECT_ROOT / "emergency_restore.log",
+        PROJECT_ROOT / "failure.txt",
+        Path("/tmp/emergency_restore.log")
+    ]
+    sys.stdout = TeeLogger(log_files, sys.stdout)
+    sys.stderr = TeeLogger(log_files, sys.stderr)
 
     if args.list_backups:
         print("🔍 Searching for backup vaults in ./data, ./backup, and archive mounts...")
