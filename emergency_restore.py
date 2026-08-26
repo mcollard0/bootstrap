@@ -477,19 +477,32 @@ class EmergencyRestorer:
                 else:
                     import re
                     not_found = re.findall(r"target not found:\s*(\S+)", res.stderr)
-                    if not_found:
-                        print(f"  {YELLOW}⚠️  Skipping packages not found in native repos: {', '.join(not_found)}{NC}")
-                        filtered = [p for p in missing_native if p not in not_found]
-                        if filtered:
-                            print(f"  📦 Retrying installation for remaining {len(filtered)} native packages...")
-                            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + filtered, input=newlines, text=True, check=False)
-                            print(f"  {GREEN}✅ Native packages installed.{NC}")
-                        # Move missing targets to AUR queue
-                        for nf in not_found:
-                            if nf not in missing_aur:
-                                missing_aur.append(nf)
-                    else:
-                        print(f"  ⚠️  Pacman notice: {res.stderr.strip()[:200]}")
+                    print(f"  ⚠️  Batch installation encountered dependency/target conflicts. Switching to resilient batching...")
+                    filtered = [p for p in missing_native if p not in not_found]
+
+                    # Install in chunks of 25, falling back to item-by-item for failing chunks
+                    batch_size = 25
+                    successful = 0
+                    for i in range(0, len(filtered), batch_size):
+                        chunk = filtered[i:i + batch_size]
+                        chunk_res = subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + chunk, input=newlines, text=True, capture_output=True)
+                        if chunk_res.returncode == 0:
+                            successful += len(chunk)
+                        else:
+                            for single_pkg in chunk:
+                                s_res = subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', single_pkg], input=newlines, text=True, capture_output=True)
+                                if s_res.returncode == 0:
+                                    successful += 1
+                                else:
+                                    if single_pkg not in missing_aur:
+                                        missing_aur.append(single_pkg)
+
+                    print(f"  {GREEN}✅ Resilient native installation completed: {successful} packages installed.{NC}")
+
+                    # Move missing targets to AUR queue
+                    for nf in not_found:
+                        if nf not in missing_aur:
+                            missing_aur.append(nf)
 
             # 3. Check & Install AUR packages
             if not missing_aur:
@@ -515,6 +528,7 @@ class EmergencyRestorer:
                         flags.extend(['--skipreview', '--noprovides'])
                     cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + missing_aur
                     try:
+                        aur_newlines = chr(10) * (len(missing_aur) * 5 + 100)
                         res = subprocess.run(cmd, input=aur_newlines, text=True)
                         if res.returncode == 0:
                             print(f"  {GREEN}✅ AUR packages step completed.{NC}")
