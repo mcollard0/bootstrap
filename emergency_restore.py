@@ -31,6 +31,33 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+# Ensure required crypto dependency is available
+try:
+    import cryptography
+except ImportError:
+    if shutil.which('pacman'):
+        if os.geteuid() == 0:
+            print("📦 Required dependency 'python-cryptography' is missing. Auto-installing via pacman -Sy...")
+            try:
+                subprocess.run(['pacman', '-Sy', '--needed', '--noconfirm', 'python-cryptography'], check=True)
+                import cryptography
+            except Exception as e:
+                print(f"Error: Could not auto-install python-cryptography ({e}).", file=sys.stderr)
+                print("Install with: sudo pacman -Sy python-cryptography", file=sys.stderr)
+                sys.exit(1)
+        else:
+            print("Error: cryptography library is required.", file=sys.stderr)
+            print("Install with: sudo pacman -Sy python-cryptography OR run with sudo: sudo python3 emergency_restore.py", file=sys.stderr)
+            sys.exit(1)
+    elif shutil.which('apt'):
+        print("Error: cryptography library is required.", file=sys.stderr)
+        print("Install with: sudo apt update && sudo apt install -y python3-cryptography", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print("Error: cryptography library is required.", file=sys.stderr)
+        print("Install with: pip3 install cryptography", file=sys.stderr)
+        sys.exit(1)
+
 from crypto_utils import SecureBootstrapCrypto, prompt_for_password
 from system_detector import SystemDetector
 

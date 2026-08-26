@@ -31,7 +31,7 @@ try:
     from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 except ImportError:
     print("Error: cryptography library is required.", file=sys.stderr)
-    print("Install with: pacman -S python-cryptography OR pip3 install cryptography", file=sys.stderr)
+    print("Install with: sudo pacman -Sy python-cryptography OR sudo apt update && sudo apt install python3-cryptography OR pip3 install cryptography", file=sys.stderr)
     sys.exit(1)
 
 # Check for Argon2
