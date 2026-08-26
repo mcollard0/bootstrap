@@ -48,7 +48,7 @@ Retrieve your latest `bootstrap_vault_*.tar.enc` from any of your configured bac
 cd /path/to/bootstrap
 
 # Run the interactive restoration tool
-python3 src/restore.py --vault /path/to/bootstrap_vault_*.tar.enc
+python3 emergency_restore.py --vault /path/to/bootstrap_vault_*.tar.zst.enc
 ```
 
 When prompted:

@@ -9,26 +9,78 @@ Keep a copy of this card accessible (e.g. phone, password manager, printed).
 
 ---
 
-## ⚡ 3-Step Recovery from Fresh Install / Live USB
+## ⚡ 4-Step Recovery from Fresh Install / Live USB
 
-### 1. Retrieve Encrypted Vault
-Get `bootstrap_vault_*.tar.enc` from:
-- Secondary Mount: `/run/media/michael/FAST_ARCHIVE/SystemBackups/`
-- Email: Download attachment from your email
-- Cloud: Google Drive / OneDrive (`Bootstrap_Backups`) or AWS S3
-- Git: `git clone git@github.com:mcollard0/bootstrap.git`
+### Step 0. Install Prerequisites
 
-### 2. Decrypt & Restore Configs
+Boot into your Live USB or fresh Linux install and open a terminal:
+
+#### 🔹 On Arch Linux / CachyOS Live USB:
+*(Python 3 and `zstd` come pre-installed)*
 ```bash
-cd bootstrap
-python3 src/restore.py --vault bootstrap_vault_*.tar.enc
+sudo pacman -Sy --noconfirm git python-cryptography
 ```
-*(Enter master password, choose option 2 to restore fstab, fish/bash dotfiles, SSH/GPG keys)*
+> *Note: `rclone` is **not** pre-installed by default. If downloading your vault from Google Drive or OneDrive, run: `sudo pacman -S --noconfirm rclone`*
 
-### 3. Reinstall Packages
+#### 🔹 On Ubuntu / Debian Live USB:
+*(Python 3 comes pre-installed)*
+```bash
+sudo apt update && sudo apt install -y git python3-cryptography zstd
+```
+> *Note: If downloading from Google Drive/OneDrive: `sudo apt install -y rclone`*
+
+---
+
+### Step 1. Retrieve the Encrypted Vault & Repo
+
+Choose whichever source is most accessible:
+
+- **Option A: Local Secondary Drive (Fastest, zero internet required)**
+  ```bash
+  # Copy repo & vault directly from your archive disk:
+  cp -r /run/media/michael/FAST_ARCHIVE/Programming/bootstrap ~/bootstrap
+  cd ~/bootstrap
+  ```
+- **Option B: GitHub (Remote Git Backup)**
+  ```bash
+  git clone https://github.com/mcollard0/bootstrap.git ~/bootstrap
+  cd ~/bootstrap
+  # (Vault is located in data/bootstrap_vault_*.tar.zst.enc)
+  ```
+- **Option C: Google Drive / OneDrive via Rclone**
+  ```bash
+  rclone copy gdrive:Bootstrap_Backups/ ./data/
+  ```
+- **Option D: Email Attachment**
+  Download `bootstrap_vault_*.tar.zst.enc` from your emergency email inbox and place in `~/bootstrap/data/`.
+
+---
+
+### Step 2. Decrypt & Restore System Configurations
+
+Run the interactive emergency restoration tool from the repository root:
+```bash
+python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
+```
+1. Review the emergency banner and press **`Y`** (or Enter) at the 900-second countdown confirmation.
+2. Enter your master encryption password.
+3. Choose **Option 2 (Full Selective Restoration)**:
+   - Restores `/etc/fstab` & storage topologies (mounts `FAST_ARCHIVE`, `LARGE_ARCHIVE`, `SLOW_ARCHIVE`, `SHARD_*`).
+   - Restores all Shells (`config.fish`, `fish_variables`, functions, `.bashrc`, `.zshrc`, MOTD).
+   - Restores all SSH keys, GPG private keys (`~/.gnupg/`), and Password Store (`~/.password-store/`).
+   - Restores Cloudflare tunnels, Docker auth, Git config, and Desktop shortcuts.
+   - Restores custom one-off files and typography (e.g. `0xProto` fonts).
+   - *(All file writes are idempotent: identical files are skipped, backups created for diffs)*.
+
+---
+
+### Step 3. Reinstall Software Packages
+
+Run the generated package installation script:
 ```bash
 sudo ./scripts/bootstrap.sh
 ```
+*(On Arch/CachyOS, uses `pacman -T` to only install missing packages in fast batches, skipping everything already present)*.
 
 ---
 
@@ -44,4 +96,8 @@ sudo ./scripts/bootstrap.sh
 To perform a complete scan, encrypted vault creation, and multi-cloud sync at any time:
 ```bash
 ./scripts/run_backup.sh
+```
+Automated backups run periodically via systemd timer:
+```bash
+./scripts/setup_systemd.sh --status
 ```
