@@ -341,6 +341,32 @@ class EmergencyRestorer:
                 rel_f = src_f.relative_to(staged_home)
                 dest_f = self.user_home / rel_f
 
+                # Sanitize .gitconfig so it doesn't force git@github.com before SSH keys are loaded
+                if str(rel_f) == ".gitconfig":
+                    try:
+                        import re
+                        gtext = src_f.read_text(encoding='utf-8')
+                        gtext = re.sub(r'(\[url\s*"git@github\.com:"\])', r'# \1 (disabled during disaster recovery)', gtext)
+                        gtext = re.sub(r'(insteadOf\s*=\s*https://github\.com/)', r'# \1', gtext)
+                        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_g:
+                            tmp_g.write(gtext)
+                            tmp_g_path = Path(tmp_g.name)
+                        try:
+                            res = self._safe_copy_file(tmp_g_path, dest_f, mode=0o644)
+                            if res == 'created':
+                                count_created += 1
+                                print(f"  {GREEN}+ [CREATED]{NC} {rel_f} (with HTTPS sanitization)")
+                            elif res == 'updated':
+                                count_updated += 1
+                                print(f"  {YELLOW}~ [UPDATED]{NC} {rel_f} (with HTTPS sanitization)")
+                            else:
+                                count_skipped += 1
+                        finally:
+                            tmp_g_path.unlink()
+                        continue
+                    except Exception as e:
+                        print(f"  ⚠️  Notice on .gitconfig: {e}")
+
                 # Preserve strict permissions for keys
                 mode = None
                 if ".ssh" in str(rel_f) or ".gnupg" in str(rel_f) or ".password-store" in str(rel_f) or ".cloudflared" in str(rel_f):
@@ -357,12 +383,27 @@ class EmergencyRestorer:
                     count_updated += 1
                     print(f"  {YELLOW}~ [UPDATED]{NC} {rel_f}")
 
-        # Secure directory permissions
+        # Secure directory permissions and user ownership
         for d in ['.ssh', '.gnupg', '.password-store', '.cloudflared']:
             dp = self.user_home / d
             if dp.exists():
                 try:
                     os.chmod(dp, 0o700)
+                    self._set_user_ownership(dp)
+                    for root, dirs, fnames in os.walk(dp):
+                        for name in dirs:
+                            p = Path(root) / name
+                            try:
+                                os.chmod(p, 0o700)
+                                self._set_user_ownership(p)
+                            except Exception:
+                                pass
+                        for name in fnames:
+                            p = Path(root) / name
+                            try:
+                                self._set_user_ownership(p)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
