@@ -141,7 +141,7 @@ Add arbitrary files, fonts, or scripts to back up:
 ### 5. Disaster Recovery (Fresh System or Replaced `/` Drive)
 ```bash
 # Step 1: Unpack vault and restore fstab, fish/bash dotfiles, GPG/SSH keys, and configs
-python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
+sudo python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
 
 # Step 2: Reinstall missing software packages in batch (skips packages already present)
 sudo ./scripts/bootstrap.sh

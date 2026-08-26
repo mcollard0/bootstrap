@@ -423,6 +423,11 @@ class EmergencyRestorer:
         """Run interactive restoration workflow."""
         print_emergency_banner()
 
+        if os.geteuid() != 0:
+            print(f"{YELLOW}⚠️  NOTE: Not running as root (sudo).{NC}")
+            print(f"   Writing /etc/fstab, creating /run/media mounts, and installing fonts require root permissions.")
+            print(f"   {BOLD}Recommended:{NC} {GREEN}sudo python3 emergency_restore.py{NC}\n")
+
         if not skip_confirmation:
             if not prompt_confirmation_with_countdown(timeout_seconds=900):
                 sys.exit(1)

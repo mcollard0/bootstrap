@@ -47,9 +47,10 @@ Retrieve your latest `bootstrap_vault_*.tar.enc` from any of your configured bac
 # Navigate to bootstrap project directory
 cd /path/to/bootstrap
 
-# Run the interactive restoration tool
-python3 emergency_restore.py --vault /path/to/bootstrap_vault_*.tar.zst.enc
+# Run the interactive restoration tool as root/sudo
+sudo python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
 ```
+*(Running with `sudo` is required to safely update `/etc/fstab`, create `/run/media/` directories, and install system typography into `/usr/local/share/fonts/`. The tool reads `$SUDO_USER` to restore your home dotfiles with your regular user's ownership).*
 
 When prompted:
 1. Enter your **Master Encryption Password**.

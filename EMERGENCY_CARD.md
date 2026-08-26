@@ -58,10 +58,11 @@ Choose whichever source is most accessible:
 
 ### Step 2. Decrypt & Restore System Configurations
 
-Run the interactive emergency restoration tool from the repository root:
+Run the interactive emergency restoration tool as **`sudo`** from the repository root:
 ```bash
-python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
+sudo python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
 ```
+*(Running with `sudo` is required to safely merge into `/etc/fstab`, create `/run/media/` mount points, and restore system fonts and hardware rules. The tool automatically detects your regular user via `$SUDO_USER` and sets proper user ownership for all home directory dotfiles and keys.)*
 1. Review the emergency banner and press **`Y`** (or Enter) at the 900-second countdown confirmation.
 2. Enter your master encryption password.
 3. Choose **Option 2 (Full Selective Restoration)**:
