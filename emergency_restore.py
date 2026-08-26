@@ -499,6 +499,15 @@ class EmergencyRestorer:
                 else:
                     print(f"  ⚠️  No AUR helper available. Missing AUR/custom packages: {missing_aur}")
 
+            # Friendly symlinks for tools like Google Chrome
+            chrome_bin = shutil.which('google-chrome-beta')
+            if chrome_bin:
+                try:
+                    subprocess.run(['ln', '-sf', chrome_bin, '/usr/local/bin/chrome'], check=False)
+                    subprocess.run(['ln', '-sf', chrome_bin, '/usr/local/bin/google-chrome'], check=False)
+                except Exception:
+                    pass
+
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
             if apt_pkgs:
