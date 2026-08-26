@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Comprehensive secrets management tool - Add SSH keys, files, and environment variables to encrypted secrets.
-Enhanced version with file encryption and archive-only support.
-Merged from add_ssh_to_secrets.py and add_files_to_secrets.py
+Enhanced version with file encryption, Fish & Bash shell support, and key-value management.
 """
 
 import json
@@ -10,7 +9,13 @@ import sys
 import os
 import glob
 import argparse
-sys.path.insert(0, '../src')
+from pathlib import Path
+
+# Add src to path
+SCRIPT_DIR = Path(__file__).parent
+SRC_DIR = SCRIPT_DIR.parent / 'src'
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 try:
     from crypto_utils import SecureBootstrapCrypto, prompt_for_password
@@ -18,92 +23,94 @@ except ImportError:
     print("Error: Could not import crypto_utils. Please ensure it's in ../src/")
     sys.exit(1)
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Add secrets and files to encrypted secrets storage')
+    parser = argparse.ArgumentParser(description='Add secrets, credentials, and files to encrypted secrets storage')
     parser.add_argument('--add-fstab', action='store_true', help='Add /etc/fstab as archive-only file')
     parser.add_argument('--add-ssl-keys', action='store_true', help='Add SSL private keys from /etc/ssl/private/')
     parser.add_argument('--files', nargs='*', help='Additional files to encrypt')
-    parser.add_argument('--secrets-file', default='../data/encrypted_secrets.json', help='Path to secrets file')
+    parser.add_argument('--set-key', nargs=2, metavar=('KEY', 'VALUE'), help='Set an encrypted secret variable (e.g. --set-key OPENAI_API_KEY sk-...)')
+    parser.add_argument('--secrets-file', default=str(SCRIPT_DIR.parent / 'data/encrypted_secrets.json'), help='Path to secrets file')
     args = parser.parse_args()
-    
-    secrets_file = args.secrets_file
-    
-    # Load existing encrypted secrets
-    try:
-        with open(secrets_file, 'r') as f:
-            encrypted_dict = json.load(f)
-    except Exception as e:
-        print(f"Error reading {secrets_file}: {e}", file=sys.stderr)
-        sys.exit(1)
-    
+
+    secrets_file = Path(args.secrets_file)
+
+    # Load existing encrypted secrets if file exists
+    encrypted_dict = {}
+    if secrets_file.exists():
+        try:
+            with open(secrets_file, 'r', encoding='utf-8') as f:
+                encrypted_dict = json.load(f)
+        except Exception as e:
+            print(f"Error reading {secrets_file}: {e}", file=sys.stderr)
+            sys.exit(1)
+
     # Get password from user or environment variable
     password = prompt_for_password("secrets decryption and update")
-    
+
     # Initialize crypto and decrypt existing secrets
     crypto = SecureBootstrapCrypto()
-    try:
-        decrypted_data = crypto.decrypt_dict(encrypted_dict, password)
-    except ValueError as e:
-        print(f"Decryption failed: {e}", file=sys.stderr)
-        sys.exit(1)
-    
-    # Add git configuration if not already present
-    if 'git_user_email' not in decrypted_data:
-        decrypted_data['git_user_email'] = 'mcollard@gmail.com'
-        print("  ✓ Added git_user_email")
-    
-    if 'git_user_name' not in decrypted_data:
-        decrypted_data['git_user_name'] = 'Michael Collard'
-        print("  ✓ Added git_user_name")
-    
-    # Files to encrypt (SSH keys and other sensitive files)
+    decrypted_data = {}
+    if encrypted_dict:
+        try:
+            decrypted_data = crypto.decrypt_dict(encrypted_dict, password)
+        except ValueError as e:
+            print(f"Decryption failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Add custom key-value if provided
+    if args.set_key:
+        k, v = args.set_key
+        decrypted_data[k] = v
+        print(f"  ✓ Set secret key: {k}")
+
+    # Files to encrypt (SSH keys, Fish/Bash configs, credentials)
     file_patterns = [
-        '~/.ssh/id_*',          # All SSH keys
-        '~/.ssh/config',        # SSH config if it exists
-        '~/.gitconfig',         # Git configuration
-        '~/.bashrc',            # Bash configuration with environment variables
-        '~/.bash_aliases',      # Bash aliases
-        '~/.netrc',             # Network resource config
-        '~/.aws/credentials',   # AWS credentials
-    ];
-    
-    # Add additional files from command line
+        '~/.ssh/id_*',
+        '~/.ssh/config',
+        '~/.gitconfig',
+        '~/.config/fish/config.fish',
+        '~/.config/fish/fish_variables',
+        '~/.bashrc',
+        '~/.bash_aliases',
+        '~/.netrc',
+        '~/.aws/credentials',
+    ]
+
     if args.files:
         file_patterns.extend(args.files)
-    
+
     files_to_encrypt = []
-    special_files = {}  # For files with special flags
-    
-    print("\\nScanning for files to encrypt...")
-    
+    special_files = {}
+
+    print("\nScanning for sensitive files to encrypt...")
+
     for pattern in file_patterns:
         expanded_pattern = os.path.expanduser(pattern)
         matches = glob.glob(expanded_pattern)
         for match in matches:
             if os.path.isfile(match):
-                # Skip public keys - we only encrypt private keys
                 if match.endswith('.pub'):
                     continue
                 files_to_encrypt.append(match)
                 print(f"  ✓ Found: {match}")
-    
-    # Add /etc/fstab as archive-only file if requested
+
+    # Add /etc/fstab if requested
     if args.add_fstab and os.path.exists('/etc/fstab'):
         special_files['/etc/fstab'] = {
             'not_to_restore': True,
-            'ask': True, 
+            'ask': True,
             'default': 'no',
             'description': 'System partition table (/etc/fstab)'
         }
         print("  ✓ Adding /etc/fstab as archive-only file")
-    
-    # Add SSL private keys from /etc/ssl/private/ if requested
+
+    # Add SSL private keys
     if args.add_ssl_keys:
         import subprocess
         ssl_private_dir = '/etc/ssl/private'
         if os.path.exists(ssl_private_dir):
             try:
-                # List .key files (requires sudo)
                 result = subprocess.run(
                     ['sudo', 'ls', '-1', ssl_private_dir],
                     capture_output=True, text=True
@@ -112,9 +119,7 @@ def main():
                     key_files = [f for f in result.stdout.strip().split('\n') if f and f.endswith('.key')]
                     for key_file in key_files:
                         key_path = os.path.join(ssl_private_dir, key_file)
-                        # Skip snakeoil (default self-signed cert - auto-regenerated by ssl-cert package)
                         if 'snakeoil' in key_file:
-                            print(f"  ⏭ Skipping snakeoil key: {key_file} (auto-regenerated on fresh install)")
                             continue
                         special_files[key_path] = {
                             'ask': True,
@@ -122,94 +127,34 @@ def main():
                             'description': f'SSL private key ({key_file})'
                         }
                         print(f"  ✓ Adding SSL private key: {key_file}")
-                else:
-                    print("  ⚠ Cannot access /etc/ssl/private/ (requires sudo)")
             except Exception as e:
                 print(f"  ⚠ Error scanning SSL keys: {e}")
-        else:
-            print("  ⚠ /etc/ssl/private/ directory not found")
-    
-    if not files_to_encrypt and not special_files:
-        print("  ⚠ No files found to encrypt")
-    
-    # Enhanced encrypt_dict to handle special files
-    def encrypt_with_special_files(data, password, regular_files, special_files):
-        encrypted_items = {}
-        encrypted_files = {}
-        
-        # Encrypt regular data
-        for key, value in data.items():
-            if isinstance(value, str) and value.strip():
-                encrypted_items[key] = crypto.encrypt(value, password)
-            else:
-                encrypted_items[key] = value
-        
-        # Encrypt regular files
-        for file_path in regular_files:
-            if os.path.exists(os.path.expanduser(file_path)):
-                try:
-                    file_key = os.path.basename(file_path)
-                    encrypted_files[file_key] = crypto.encrypt_file(os.path.expanduser(file_path), password)
-                except Exception as e:
-                    print(f"Warning: Could not encrypt file {file_path}: {e}")
-        
-        # Encrypt special files with flags
-        for file_path, flags in special_files.items():
-            if os.path.exists(file_path):
-                try:
-                    file_key = os.path.basename(file_path)
-                    encrypted_files[file_key] = crypto.encrypt_file(file_path, password, **flags)
-                except Exception as e:
-                    print(f"Warning: Could not encrypt special file {file_path}: {e}")
-        
-        result = {
-            'encrypted_data': encrypted_items,
-            'version': '2.0',
-            'total_items': len(encrypted_items)
-        }
-        
-        if encrypted_files:
-            result['encrypted_files'] = encrypted_files
-            result['total_files'] = len(encrypted_files)
-        
-        return result
-    
-    # Re-encrypt all data with files
-    total_files = len(files_to_encrypt) + len(special_files)
-    print(f"\\nRe-encrypting {len(decrypted_data)} secrets and {total_files} files...")
-    new_encrypted_dict = encrypt_with_special_files(decrypted_data, password, files_to_encrypt, special_files)
-    
-    # Backup original file
-    backup_file = f"{secrets_file}.backup.{os.getpid()}"
-    with open(backup_file, 'w') as f:
-        json.dump(encrypted_dict, f, indent=2)
-    print(f"Created backup: {backup_file}")
-    
+
+    # Re-encrypt all data
+    new_encrypted_dict = crypto.encrypt_dict(decrypted_data, password, file_paths=files_to_encrypt)
+
+    # Add special files
+    if special_files:
+        if 'encrypted_files' not in new_encrypted_dict:
+            new_encrypted_dict['encrypted_files'] = {}
+        for sf_path, sf_flags in special_files.items():
+            if os.path.exists(sf_path):
+                f_key = os.path.basename(sf_path)
+                new_encrypted_dict['encrypted_files'][f_key] = crypto.encrypt_file(sf_path, password, **sf_flags)
+        new_encrypted_dict['total_files'] = len(new_encrypted_dict['encrypted_files'])
+
     # Save updated secrets
-    with open(secrets_file, 'w') as f:
+    secrets_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(secrets_file, 'w', encoding='utf-8') as f:
         json.dump(new_encrypted_dict, f, indent=2)
-    
+
     total_secrets = new_encrypted_dict.get('total_items', 0)
     total_files_final = new_encrypted_dict.get('total_files', 0)
-    
-    print(f"✅ Successfully updated {secrets_file}")
+
+    print(f"\n✅ Successfully updated {secrets_file}")
     print(f"   Secrets: {total_secrets}")
-    print(f"   Files: {total_files_final}")
-    print(f"   Version: {new_encrypted_dict.get('version', 'unknown')}")
-    
-    # Show what files were encrypted
-    if 'encrypted_files' in new_encrypted_dict:
-        print(f"\\n📁 Encrypted files:")
-        for file_key, file_data in new_encrypted_dict['encrypted_files'].items():
-            path = file_data.get('path', 'unknown')
-            mode = file_data.get('mode', 'unknown')
-            flags = []
-            if file_data.get('not_to_restore'):
-                flags.append('archive-only')
-            if file_data.get('ask'):
-                flags.append('ask-user')
-            flag_str = f" [{', '.join(flags)}]" if flags else ""
-            print(f"   {file_key}: {path} (mode: {mode}){flag_str}")
+    print(f"   Files:   {total_files_final}")
+
 
 if __name__ == '__main__':
     main()

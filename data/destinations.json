@@ -1,0 +1,51 @@
+{
+  "local_project_backup": {
+    "type": "local",
+    "enabled": true,
+    "destination_dir": "./backup",
+    "retention_count": 25
+  },
+  "local_fast_archive": {
+    "type": "local",
+    "enabled": true,
+    "destination_dir": "/run/media/michael/FAST_ARCHIVE/SystemBackups",
+    "retention_count": 15
+  },
+  "aws_s3": {
+    "type": "s3",
+    "enabled": false,
+    "bucket_name": "",
+    "access_key_id": "",
+    "secret_access_key": "",
+    "region_name": "us-east-1",
+    "endpoint_url": null,
+    "prefix": "bootstrap-backups/",
+    "retention_count": 10
+  },
+  "google_drive": {
+    "type": "gdrive",
+    "enabled": false,
+    "use_rclone": true,
+    "rclone_remote": "gdrive",
+    "folder_name": "Bootstrap_Backups",
+    "retention_count": 10
+  },
+  "onedrive": {
+    "type": "onedrive",
+    "enabled": false,
+    "use_rclone": true,
+    "rclone_remote": "onedrive",
+    "folder_name": "Bootstrap_Backups",
+    "retention_count": 10
+  },
+  "email_smtp": {
+    "type": "email",
+    "enabled": false,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "use_tls": true,
+    "smtp_username": "",
+    "smtp_password": "",
+    "recipient_email": ""
+  }
+}

@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-Decrypt encrypted secrets and output as bash environment variable exports.
+Decrypt encrypted secrets and output as shell environment variables or inspect keys.
 """
 
 import json
 import sys
 import os
-sys.path.insert(0, '../src')
+from pathlib import Path
+
+# Add src to path
+SCRIPT_DIR = Path(__file__).parent
+SRC_DIR = SCRIPT_DIR.parent / 'src'
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 try:
     from crypto_utils import SecureBootstrapCrypto, prompt_for_password
@@ -14,71 +20,42 @@ except ImportError:
     print("Error: Could not import crypto_utils. Please ensure it's in ../src/")
     sys.exit(1)
 
+
 def main():
-    secrets_file = "../data/encrypted_secrets.json"
+    secrets_file = SCRIPT_DIR.parent / "data/encrypted_secrets.json"
     restore_files = '--restore-files' in sys.argv or '-f' in sys.argv
     list_secrets = '--list-secrets' in sys.argv
-    
-    # Check if secrets file exists
-    if not os.path.exists(secrets_file):
+
+    if not secrets_file.exists():
         print(f"Warning: {secrets_file} not found", file=sys.stderr)
         return
-    
-    # Load encrypted secrets
+
     try:
-        with open(secrets_file, 'r') as f:
+        with open(secrets_file, 'r', encoding='utf-8') as f:
             encrypted_dict = json.load(f)
     except Exception as e:
         print(f"Error reading {secrets_file}: {e}", file=sys.stderr)
         sys.exit(1)
-    
-    # Get password from user
+
     password = prompt_for_password("secrets decryption")
-    
-    # Initialize crypto and decrypt
     crypto = SecureBootstrapCrypto()
+
     try:
         decrypted_data = crypto.decrypt_dict(encrypted_dict, password, restore_files=restore_files)
-        
-        if restore_files:
-            print(f"Files restored from encrypted secrets", file=sys.stderr)
-            
-            # Write execution metadata for restored files
-            execution_metadata = {}
-            encrypted_files = encrypted_dict.get('encrypted_files', {})
-            for file_key, encrypted_file in encrypted_files.items():
-                # Check for execution step metadata in file description/path
-                file_path = encrypted_file.get('path', file_key)
-                if '|' in file_key and file_key.endswith('.sh'):
-                    # Extract execution step from file key (format: filename.sh|StepName)
-                    script_name, step_name = file_key.rsplit('|', 1)
-                    actual_path = f"./{script_name}"
-                    if step_name.strip():
-                        execution_metadata[step_name.strip()] = execution_metadata.get(step_name.strip(), []) + [actual_path]
-            
-            # Write execution metadata file for bootstrap to read
-            if execution_metadata:
-                with open('./file_execution_metadata.json', 'w') as f:
-                    json.dump(execution_metadata, f, indent=2)
-                print(f"Execution metadata written for {len(execution_metadata)} steps", file=sys.stderr)
-        
-        # Output as bash exports (unless listing)
-        if not list_secrets:
-            for key, value in decrypted_data.items():
-                # Shell-escape the value by wrapping in single quotes and escaping single quotes
-                escaped_value = value.replace("'", "'\"'\"'")
-                print(f"export {key}='{escaped_value}'")
+
+        if list_secrets:
+            print("\n📋 Decrypted Secrets:")
+            for k, v in decrypted_data.items():
+                print(f"  • {k} = {v}")
         else:
-            # List secrets mode - show decrypted values
-            for key, value in decrypted_data.items():
-                print(f"export {key}='{value}'")
-    
+            for k, v in decrypted_data.items():
+                escaped = str(v).replace("'", "'\"'\"'")
+                print(f"export {k}='{escaped}'")
+
     except ValueError as e:
         print(f"Decryption failed: {e}", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
-        sys.exit(1)
+
 
 if __name__ == '__main__':
     main()

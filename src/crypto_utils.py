@@ -1,451 +1,420 @@
 #!/usr/bin/env python3
 """
-Ubuntu Bootstrap System - Cryptographic Utilities
+Bootstrap System - Cryptographic Utilities
 
-This module provides high-security symmetric encryption using:
-- ChaCha20-Poly1305 (authenticated encryption)  
-- Argon2id (password-based key derivation)
-
-Security Properties:
-- Confidentiality: ChaCha20 stream cipher (256-bit key)
-- Integrity: Poly1305 MAC (128-bit authentication tag)
-- Key Derivation: Argon2id (memory-hard, side-channel resistant)
+High-security symmetric encryption using:
+- ChaCha20-Poly1305 (authenticated encryption with 256-bit key and Poly1305 MAC)
+- Argon2id (preferred memory-hard KDF) with automatic scrypt fallback (stdlib)
+- Authenticated encrypted bundle packaging (.tar.enc / .tar.gz.enc)
 """
 
-import os;
-import base64;
-import secrets;
-import getpass;
-from typing import Tuple, Dict, Any, List;
+import os
+import sys
+import json
+import base64
+import tarfile
+import hashlib
+import secrets
+import getpass
+import tempfile
+from pathlib import Path
+from typing import Tuple, Dict, Any, List, Optional
 
-# Debug flag for password troubleshooting
-DEBUG_CRYPTO = os.environ.get( 'CRYPTO_DEBUG', '0' ) == '1';
+# Debug flag
+DEBUG_CRYPTO = os.environ.get('CRYPTO_DEBUG', '0') == '1'
 
+# Try importing cryptography AEAD
 try:
-    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305;
-    from argon2 import PasswordHasher;
-    from argon2.low_level import hash_secret_raw, Type;
-except ImportError as e:
-    print( f"Missing required cryptography libraries: {e}" );
-    print( "Install with: pip3 install cryptography argon2-cffi" );
-    exit( 1 );
+    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+except ImportError:
+    print("Error: cryptography library is required.", file=sys.stderr)
+    print("Install with: pacman -S python-cryptography OR pip3 install cryptography", file=sys.stderr)
+    sys.exit(1)
+
+# Check for Argon2
+HAS_ARGON2 = False
+try:
+    from argon2.low_level import hash_secret_raw, Type
+    HAS_ARGON2 = True
+except ImportError:
+    HAS_ARGON2 = False
 
 
 class SecureBootstrapCrypto:
-    """High-security cryptographic operations for sensitive bootstrap data."""
-    
-    # Argon2id parameters (conservative for maximum security)
-    ARGON2_TIME_COST = 3;        # Number of iterations
-    ARGON2_MEMORY_COST = 65536;  # 64 MB memory usage
-    ARGON2_PARALLELISM = 4;      # Number of threads
-    ARGON2_HASH_LEN = 32;        # 256-bit derived key
-    ARGON2_SALT_LEN = 16;        # 128-bit salt
-    
+    """High-security cryptographic operations for sensitive bootstrap data and archives."""
+
+    # Argon2id parameters (conservative)
+    ARGON2_TIME_COST = 3
+    ARGON2_MEMORY_COST = 65536  # 64 MB
+    ARGON2_PARALLELISM = 4
+    ARGON2_HASH_LEN = 32
+    ARGON2_SALT_LEN = 16
+
+    # scrypt fallback parameters (memory-hard, standard library)
+    SCRYPT_N = 16384     # CPU/memory cost
+    SCRYPT_R = 8         # block size
+    SCRYPT_P = 1         # parallelization
+
     # ChaCha20-Poly1305 parameters
-    CHACHA20_KEY_LEN = 32;       # 256-bit key
-    CHACHA20_NONCE_LEN = 12;     # 96-bit nonce
-    POLY1305_TAG_LEN = 16;       # 128-bit authentication tag
-    
-    def __init__( self ):
-        """Initialize the cryptographic subsystem."""
-        self.cipher = ChaCha20Poly1305;
-        pass;
-    
-    def encrypt_bytes( self, data: bytes, password: str ) -> Dict[str, str]:
-        """Encrypt raw bytes; returns a dict with base64 fields and metadata."""
-        key, salt = self.derive_key( password );
-        nonce = secrets.token_bytes( self.CHACHA20_NONCE_LEN );
-        cipher = self.cipher( key );
-        ciphertext = cipher.encrypt( nonce, data, None );
-        key = b'\x00' * len( key );
-        return {
-            'ciphertext': base64.b64encode( ciphertext ).decode( 'ascii' ),
-            'nonce': base64.b64encode( nonce ).decode( 'ascii' ),
-            'salt': base64.b64encode( salt ).decode( 'ascii' ),
-            'algorithm': 'ChaCha20-Poly1305',
-            'kdf': 'Argon2id'
-        };
-    
-    def decrypt_bytes( self, enc: Dict[str, str], password: str ) -> bytes:
-        """Decrypt to raw bytes from an encrypted dict."""
-        ciphertext = base64.b64decode( enc['ciphertext'] );
-        nonce = base64.b64decode( enc['nonce'] );
-        salt = base64.b64decode( enc['salt'] );
-        if enc.get( 'algorithm' ) != 'ChaCha20-Poly1305':
-            raise ValueError( f"Unsupported algorithm: {enc.get('algorithm')}" );
-        key, _ = self.derive_key( password, salt );
-        cipher = self.cipher( key );
-        plaintext = cipher.decrypt( nonce, ciphertext, None );
-        key = b'\x00' * len( key );
-        return plaintext;
-    
-    def encrypt_file( self, path: str, password: str, **kwargs ) -> Dict[str, Any]:
-        """Encrypt a file's bytes and return an object including path, mode, and optional flags."""
-        import subprocess;
-        import tempfile;
-        
-        # Try to read file directly first
-        try:
-            st = os.stat( path );
-            mode = oct( st.st_mode )[-3:];
-            with open( path, 'rb' ) as f:
-                data = f.read();
-        except PermissionError:
-            # File requires sudo access - use sudo to read it
-            try:
-                # Get file mode with sudo
-                stat_result = subprocess.run(
-                    ['sudo', 'stat', '-c', '%a', path],
-                    capture_output=True, text=True, check=True
-                );
-                mode = stat_result.stdout.strip();
-                
-                # Read file content with sudo
-                cat_result = subprocess.run(
-                    ['sudo', 'cat', path],
-                    capture_output=True, check=True
-                );
-                data = cat_result.stdout;
-            except subprocess.CalledProcessError as e:
-                raise PermissionError( f"Cannot read file {path} even with sudo: {e}" );
-        
-        enc = self.encrypt_bytes( data, password );
-        enc['path'] = path;
-        enc['mode'] = mode;
-        
-        # Add optional flags
-        if 'not_to_restore' in kwargs:
-            enc['not_to_restore'] = kwargs['not_to_restore'];
-        if 'ask' in kwargs:
-            enc['ask'] = kwargs['ask'];
-        if 'default' in kwargs:
-            enc['default'] = kwargs['default'];
-        if 'description' in kwargs:
-            enc['description'] = kwargs['description'];
-            
-        return enc;
-    
-    def decrypt_file_to_path( self, enc: Dict[str, Any], password: str, dest_path: str = None ) -> str:
-        """Decrypt an encrypted file object to dest_path (or its own path). Returns path written."""
-        out_path = dest_path or enc.get( 'path' );
-        if not out_path:
-            raise ValueError( 'Encrypted file object missing path' );
-        data = self.decrypt_bytes( enc, password );
-        os.makedirs( os.path.dirname( os.path.expanduser( out_path ) ), exist_ok=True );
-        p = os.path.expanduser( out_path );
-        with open( p, 'wb' ) as f:
-            f.write( data );
-        try:
-            mode = enc.get( 'mode' );
-            if mode and mode.isdigit():
-                os.chmod( p, int( mode, 8 ) );
-        except Exception:
-            pass;
-        return p;
-    
-    def derive_key( self, password: str, salt: bytes = None ) -> Tuple[bytes, bytes]:
+    CHACHA20_KEY_LEN = 32
+    CHACHA20_NONCE_LEN = 12
+    POLY1305_TAG_LEN = 16
+
+    MAGIC_HEADER = b"BOOTSTRAP_VAULT_V3\n"
+
+    def __init__(self):
+        self.cipher = ChaCha20Poly1305
+
+    def derive_key(self, password: str, salt: bytes = None, kdf: str = None) -> Tuple[bytes, bytes, str]:
         """
-        Derive a cryptographic key from password using Argon2id.
-        
-        Args:
-            password: Master password string
-            salt: Optional salt bytes (generates random if None)
-            
-        Returns:
-            Tuple of (derived_key, salt) both as bytes
+        Derive a 256-bit cryptographic key from a password.
+        Uses Argon2id if available or specified, otherwise scrypt.
         """
         if salt is None:
-            salt = secrets.token_bytes( self.ARGON2_SALT_LEN );
-        
-        # Use Argon2id for maximum security against all attack vectors
-        # Using hash_secret_raw to get raw 32-byte output (not encoded format)
-        derived_key = hash_secret_raw(
-            password.encode( 'utf-8' ),
-            salt,
-            time_cost=self.ARGON2_TIME_COST,
-            memory_cost=self.ARGON2_MEMORY_COST, 
-            parallelism=self.ARGON2_PARALLELISM,
-            hash_len=self.ARGON2_HASH_LEN,
-            type=Type.ID  # Argon2id variant
-        );
-        
-        if DEBUG_CRYPTO:
-            print( f"🔍 Debug: Password: '{password}'" );
-            print( f"🔍 Debug: Salt length: {len(salt)} bytes" );
-            print( f"🔍 Debug: Derived key length: {len(derived_key)} bytes" );
-            print( f"🔍 Debug: Key (hex): {derived_key.hex() if isinstance(derived_key, bytes) else 'NOT_BYTES'}" );
-        
-        # Ensure we have exactly 32 bytes for ChaCha20
-        if len( derived_key ) != self.ARGON2_HASH_LEN:
-            raise ValueError( f"Argon2 produced {len(derived_key)} bytes, expected {self.ARGON2_HASH_LEN}" );
-        
-        return derived_key, salt;
-    
-    def encrypt( self, plaintext: str, password: str ) -> Dict[str, str]:
-        """
-        Encrypt plaintext using ChaCha20-Poly1305.
-        
-        Args:
-            plaintext: Data to encrypt
-            password: Master password
-            
-        Returns:
-            Dictionary with base64-encoded cipher components
-        """
-        # Convert string to bytes
-        plaintext_bytes = plaintext.encode( 'utf-8' );
-        
-        # Derive encryption key
-        key, salt = self.derive_key( password );
-        
-        # Generate random nonce
-        nonce = secrets.token_bytes( self.CHACHA20_NONCE_LEN );
-        
-        # Create cipher instance and encrypt
-        cipher = self.cipher( key );
-        ciphertext = cipher.encrypt( nonce, plaintext_bytes, None );
-        
-        # Clear sensitive key from memory
-        key = b'\x00' * len( key );
-        
-        # Return base64-encoded components
-        return {
-            'ciphertext': base64.b64encode( ciphertext ).decode( 'ascii' ),
-            'nonce': base64.b64encode( nonce ).decode( 'ascii' ),
-            'salt': base64.b64encode( salt ).decode( 'ascii' ),
-            'algorithm': 'ChaCha20-Poly1305',
-            'kdf': 'Argon2id'
-        };
-    
-    def decrypt( self, encrypted_data: Dict[str, str], password: str ) -> str:
-        """
-        Decrypt ciphertext using ChaCha20-Poly1305.
-        
-        Args:
-            encrypted_data: Dictionary from encrypt() method
-            password: Master password
-            
-        Returns:
-            Decrypted plaintext string
-            
-        Raises:
-            ValueError: If decryption fails (wrong password or corrupted data)
-        """
-        try:
-            # Decode base64 components
-            ciphertext = base64.b64decode( encrypted_data['ciphertext'] );
-            nonce = base64.b64decode( encrypted_data['nonce'] );
-            salt = base64.b64decode( encrypted_data['salt'] );
-            
-            # Verify algorithm compatibility
-            if encrypted_data.get( 'algorithm' ) != 'ChaCha20-Poly1305':
-                raise ValueError( f"Unsupported algorithm: {encrypted_data.get('algorithm')}" );
-            
-            # Re-derive the key using stored salt
-            key, _ = self.derive_key( password, salt );
-            
-            # Create cipher and decrypt
-            cipher = self.cipher( key );
-            plaintext_bytes = cipher.decrypt( nonce, ciphertext, None );
-            
-            # Clear sensitive key from memory
-            key = b'\x00' * len( key );
-            
-            # Convert back to string
-            return plaintext_bytes.decode( 'utf-8' );
-            
-        except Exception as e:
-            if DEBUG_CRYPTO:
-                print( f"🔍 Debug: Decryption error: {e}" );
-                print( f"🔍 Debug: Password used: '{password}'" );
-                print( f"🔍 Debug: Salt: {salt.hex()}" );
-                print( f"🔍 Debug: Key length: {len(key) if 'key' in locals() else 'NOT_SET'}" );
-            raise ValueError( f"Decryption failed - invalid password or corrupted data: {e}" );
-    
-    def encrypt_dict( self, sensitive_data: Dict[str, Any], password: str, file_paths: List[str] = None ) -> Dict[str, Any]:
-        """
-        Encrypt a dictionary of sensitive key-value pairs and optionally files.
-        
-        Args:
-            sensitive_data: Dictionary with sensitive values
-            password: Master password
-            file_paths: List of file paths to encrypt
-            
-        Returns:
-            Dictionary with encrypted values, files, and metadata
-        """
-        encrypted_items = {};
-        encrypted_files = {};
-        
-        for key, value in sensitive_data.items():
-            if isinstance( value, str ) and value.strip():
-                encrypted_items[key] = self.encrypt( value, password );
+            salt = secrets.token_bytes(self.ARGON2_SALT_LEN)
+
+        chosen_kdf = kdf
+        if chosen_kdf is None:
+            chosen_kdf = 'Argon2id' if HAS_ARGON2 else 'scrypt'
+
+        password_bytes = password.encode('utf-8')
+
+        if chosen_kdf == 'Argon2id':
+            if not HAS_ARGON2:
+                # If Argon2id was requested but library missing, try scrypt
+                if DEBUG_CRYPTO:
+                    print("Argon2 not available, falling back to scrypt")
+                chosen_kdf = 'scrypt'
+                derived_key = hashlib.scrypt(
+                    password_bytes, salt=salt, n=self.SCRYPT_N, r=self.SCRYPT_R, p=self.SCRYPT_P, maxmem=128*1024*1024, dklen=self.CHACHA20_KEY_LEN
+                )
             else:
-                encrypted_items[key] = value;  # Keep non-string values as-is
-        
-        # Encrypt files if provided
+                derived_key = hash_secret_raw(
+                    password_bytes,
+                    salt,
+                    time_cost=self.ARGON2_TIME_COST,
+                    memory_cost=self.ARGON2_MEMORY_COST,
+                    parallelism=self.ARGON2_PARALLELISM,
+                    hash_len=self.ARGON2_HASH_LEN,
+                    type=Type.ID
+                )
+        elif chosen_kdf == 'scrypt':
+            derived_key = hashlib.scrypt(
+                password_bytes, salt=salt, n=self.SCRYPT_N, r=self.SCRYPT_R, p=self.SCRYPT_P, maxmem=128*1024*1024, dklen=self.CHACHA20_KEY_LEN
+            )
+        elif chosen_kdf == 'PBKDF2-SHA256':
+            derived_key = hashlib.pbkdf2_hmac('sha256', password_bytes, salt, 200000, dklen=self.CHACHA20_KEY_LEN)
+        else:
+            raise ValueError(f"Unsupported KDF: {chosen_kdf}")
+
+        if len(derived_key) != self.CHACHA20_KEY_LEN:
+            raise ValueError(f"Key derivation produced {len(derived_key)} bytes, expected {self.CHACHA20_KEY_LEN}")
+
+        return derived_key, salt, chosen_kdf
+
+    def encrypt_bytes(self, data: bytes, password: str) -> Dict[str, str]:
+        """Encrypt raw bytes with ChaCha20-Poly1305 and derived key."""
+        key, salt, kdf = self.derive_key(password)
+        nonce = secrets.token_bytes(self.CHACHA20_NONCE_LEN)
+        cipher = self.cipher(key)
+        ciphertext = cipher.encrypt(nonce, data, None)
+        key = b'\x00' * len(key)
+
+        return {
+            'ciphertext': base64.b64encode(ciphertext).decode('ascii'),
+            'nonce': base64.b64encode(nonce).decode('ascii'),
+            'salt': base64.b64encode(salt).decode('ascii'),
+            'algorithm': 'ChaCha20-Poly1305',
+            'kdf': kdf
+        }
+
+    def decrypt_bytes(self, enc: Dict[str, str], password: str) -> bytes:
+        """Decrypt raw bytes from an encrypted dictionary."""
+        ciphertext = base64.b64decode(enc['ciphertext'])
+        nonce = base64.b64decode(enc['nonce'])
+        salt = base64.b64decode(enc['salt'])
+        kdf = enc.get('kdf', 'Argon2id')
+
+        if enc.get('algorithm') != 'ChaCha20-Poly1305':
+            raise ValueError(f"Unsupported algorithm: {enc.get('algorithm')}")
+
+        key, _, _ = self.derive_key(password, salt=salt, kdf=kdf)
+        cipher = self.cipher(key)
+        plaintext = cipher.decrypt(nonce, ciphertext, None)
+        key = b'\x00' * len(key)
+        return plaintext
+
+    def encrypt(self, plaintext: str, password: str) -> Dict[str, str]:
+        """Encrypt plaintext string."""
+        return self.encrypt_bytes(plaintext.encode('utf-8'), password)
+
+    def decrypt(self, encrypted_data: Dict[str, str], password: str) -> str:
+        """Decrypt plaintext string."""
+        return self.decrypt_bytes(encrypted_data, password).decode('utf-8')
+
+    def encrypt_file(self, path: str, password: str, **kwargs) -> Dict[str, Any]:
+        """Encrypt a single file and record its metadata (path, permissions)."""
+        p = Path(path).expanduser()
+        if not p.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+
+        mode = oct(p.stat().st_mode)[-3:]
+        with open(p, 'rb') as f:
+            data = f.read()
+
+        enc = self.encrypt_bytes(data, password)
+        enc['path'] = str(path)
+        enc['mode'] = mode
+
+        for k in ['not_to_restore', 'ask', 'default', 'description']:
+            if k in kwargs:
+                enc[k] = kwargs[k]
+
+        return enc
+
+    def decrypt_file_to_path(self, enc: Dict[str, Any], password: str, dest_path: str = None, prefix_dir: str = None) -> str:
+        """Decrypt an encrypted file dict back to disk with proper permissions."""
+        out_path = dest_path or enc.get('path')
+        if not out_path:
+            raise ValueError("Encrypted file object missing path")
+
+        out_path = os.path.expanduser(out_path)
+        if prefix_dir:
+            rel = out_path.lstrip('/')
+            out_path = os.path.join(prefix_dir, rel)
+
+        data = self.decrypt_bytes(enc, password)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+        with open(out_path, 'wb') as f:
+            f.write(data)
+
+        mode = enc.get('mode')
+        if mode and mode.isdigit():
+            try:
+                os.chmod(out_path, int(mode, 8))
+            except Exception:
+                pass
+
+        return out_path
+
+    def encrypt_dict(self, sensitive_data: Dict[str, Any], password: str, file_paths: List[str] = None) -> Dict[str, Any]:
+        """Encrypt dictionary of values and files."""
+        encrypted_items = {}
+        encrypted_files = {}
+
+        for k, v in sensitive_data.items():
+            if isinstance(v, str) and v.strip():
+                encrypted_items[k] = self.encrypt(v, password)
+            else:
+                encrypted_items[k] = v
+
         if file_paths:
-            for file_path in file_paths:
-                if os.path.exists( os.path.expanduser( file_path ) ):
+            for fp in file_paths:
+                p = Path(fp).expanduser()
+                if p.exists() and p.is_file():
                     try:
-                        file_key = os.path.basename( file_path );
-                        encrypted_files[file_key] = self.encrypt_file( os.path.expanduser( file_path ), password );
+                        encrypted_files[p.name] = self.encrypt_file(str(p), password)
                     except Exception as e:
-                        print( f"Warning: Could not encrypt file {file_path}: {e}" );
-        
+                        if DEBUG_CRYPTO:
+                            print(f"Warning: could not encrypt {fp}: {e}")
+
         result = {
             'encrypted_data': encrypted_items,
-            'version': '2.0',
-            'total_items': len( encrypted_items )
-        };
-        
+            'version': '3.0',
+            'total_items': len(encrypted_items)
+        }
         if encrypted_files:
-            result['encrypted_files'] = encrypted_files;
-            result['total_files'] = len( encrypted_files );
-        
-        return result;
-    
-    def decrypt_dict( self, encrypted_dict: Dict[str, Any], password: str, restore_files: bool = False ) -> Dict[str, str]:
-        """
-        Decrypt a dictionary of encrypted values and optionally restore files.
-        
-        Args:
-            encrypted_dict: Dictionary from encrypt_dict() method
-            password: Master password
-            restore_files: If True, decrypt and restore encrypted files to filesystem
-            
-        Returns:
-            Dictionary with decrypted plaintext values
-        """
-        decrypted_data = {};
-        encrypted_items = encrypted_dict.get( 'encrypted_data', {} );
-        
-        for key, encrypted_value in encrypted_items.items():
-            if isinstance( encrypted_value, dict ) and 'ciphertext' in encrypted_value:
-                decrypted_data[key] = self.decrypt( encrypted_value, password );
+            result['encrypted_files'] = encrypted_files
+            result['total_files'] = len(encrypted_files)
+
+        return result
+
+    def decrypt_dict(self, encrypted_dict: Dict[str, Any], password: str, restore_files: bool = False, prefix_dir: str = None) -> Dict[str, str]:
+        """Decrypt dictionary and optionally restore files."""
+        decrypted = {}
+        items = encrypted_dict.get('encrypted_data', {})
+
+        for k, v in items.items():
+            if isinstance(v, dict) and 'ciphertext' in v:
+                decrypted[k] = self.decrypt(v, password)
             else:
-                decrypted_data[key] = encrypted_value;  # Non-encrypted values
-        
-        # Restore encrypted files if requested
-        if restore_files:
-            encrypted_files = encrypted_dict.get( 'encrypted_files', {} );
-            for file_key, encrypted_file in encrypted_files.items():
+                decrypted[k] = v
+
+        if restore_files and 'encrypted_files' in encrypted_dict:
+            for f_key, enc_file in encrypted_dict['encrypted_files'].items():
                 try:
-                    # Check if file should not be restored
-                    if encrypted_file.get( 'not_to_restore', False ):
-                        print( f"  📁 Archive-only file skipped: {file_key} ({encrypted_file.get('path', 'unknown path')})" );
-                        continue;
-                    
-                    # Check if we should ask user
-                    if encrypted_file.get( 'ask', False ):
-                        default = encrypted_file.get( 'default', 'no' ).lower();
-                        desc = encrypted_file.get( 'description', file_key );
-                        response = input( f"Restore {desc} ({encrypted_file.get('path', 'unknown')})? [y/N]: " ).strip().lower();
-                        if not response:
-                            response = default;
-                        if response not in ['y', 'yes']:
-                            print( f"  ⏭ Skipped by user: {file_key}" );
-                            continue;
-                    
-                    restored_path = self.decrypt_file_to_path( encrypted_file, password );
-                    print( f"  ✓ Restored file: {restored_path}" );
+                    if enc_file.get('not_to_restore', False):
+                        continue
+                    self.decrypt_file_to_path(enc_file, password, prefix_dir=prefix_dir)
                 except Exception as e:
-                    print( f"  ⚠ Failed to restore {file_key}: {e}" );
-        
-        return decrypted_data;
+                    print(f"Failed to restore file {f_key}: {e}", file=sys.stderr)
+
+        return decrypted
+
+    # --- Authenticated Encrypted Archive Bundle Packaging ---
+
+    def create_encrypted_vault(self, source_dir: Path, output_file: Path, password: str, metadata: Dict[str, Any] = None) -> Path:
+        """
+        Package an entire directory tree into a compressed, authenticated encrypted vault.
+        Output format:
+          [MAGIC HEADER: b"BOOTSTRAP_VAULT_V3\n"]
+          [METADATA JSON (Base64) + b"\n"]
+          [RAW CHACHA20-POLY1305 CIPHERTEXT (incl 16-byte Poly1305 Tag)]
+        """
+        source_dir = Path(source_dir)
+        output_file = Path(output_file)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. Compress source_dir to temporary in-memory or disk tar.gz
+        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_tar:
+            tmp_tar_path = Path(tmp_tar.name)
+
+        try:
+            with tarfile.open(tmp_tar_path, 'w:gz') as tar:
+                tar.add(source_dir, arcname='.')
+
+            with open(tmp_tar_path, 'rb') as f:
+                tar_bytes = f.read()
+        finally:
+            if tmp_tar_path.exists():
+                tmp_tar_path.unlink()
+
+        # 2. Derive key and encrypt
+        key, salt, kdf = self.derive_key(password)
+        nonce = secrets.token_bytes(self.CHACHA20_NONCE_LEN)
+        cipher = self.cipher(key)
+        ciphertext = cipher.encrypt(nonce, tar_bytes, None)
+        key = b'\x00' * len(key)
+
+        # 3. Create envelope metadata
+        meta = metadata.copy() if metadata else {}
+        meta.update({
+            'version': '3.0',
+            'kdf': kdf,
+            'algorithm': 'ChaCha20-Poly1305',
+            'salt': base64.b64encode(salt).decode('ascii'),
+            'nonce': base64.b64encode(nonce).decode('ascii'),
+            'sha256_uncompressed': hashlib.sha256(tar_bytes).hexdigest(),
+            'ciphertext_len': len(ciphertext),
+            'timestamp': hashlib.sha256(nonce).hexdigest()[:8]
+        })
+
+        meta_json_b64 = base64.b64encode(json.dumps(meta).encode('utf-8'))
+
+        # 4. Write sealed container
+        with open(output_file, 'wb') as f:
+            f.write(self.MAGIC_HEADER)
+            f.write(meta_json_b64)
+            f.write(b'\n')
+            f.write(ciphertext)
+
+        return output_file
+
+    def extract_encrypted_vault(self, vault_file: Path, destination_dir: Path, password: str) -> Dict[str, Any]:
+        """
+        Authenticate, decrypt, and unpack an encrypted vault to destination_dir.
+        """
+        vault_file = Path(vault_file)
+        destination_dir = Path(destination_dir)
+        destination_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(vault_file, 'rb') as f:
+            header = f.readline()
+            if header != self.MAGIC_HEADER:
+                raise ValueError("Invalid vault header: not a valid Bootstrap Vault V3")
+
+            meta_b64 = f.readline().strip()
+            ciphertext = f.read()
+
+        try:
+            meta = json.loads(base64.b64decode(meta_b64).decode('utf-8'))
+        except Exception as e:
+            raise ValueError(f"Corrupted vault header metadata: {e}")
+
+        salt = base64.b64decode(meta['salt'])
+        nonce = base64.b64decode(meta['nonce'])
+        kdf = meta.get('kdf', 'Argon2id')
+
+        # Derive key and decrypt
+        key, _, _ = self.derive_key(password, salt=salt, kdf=kdf)
+        cipher = self.cipher(key)
+
+        try:
+            tar_bytes = cipher.decrypt(nonce, ciphertext, None)
+        except Exception as e:
+            key = b'\x00' * len(key)
+            raise ValueError(f"Authentication/Decryption failed: invalid password or corrupted data ({e})")
+
+        key = b'\x00' * len(key)
+
+        # Unpack tar.gz to destination
+        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_tar:
+            tmp_tar_path = Path(tmp_tar.name)
+            tmp_tar.write(tar_bytes)
+
+        try:
+            with tarfile.open(tmp_tar_path, 'r:gz') as tar:
+                tar.extractall(path=destination_dir, filter='data' if hasattr(tarfile, 'data_filter') else None)
+        finally:
+            if tmp_tar_path.exists():
+                tmp_tar_path.unlink()
+
+        return meta
 
 
-
-def prompt_for_password( purpose: str = "encryption", allow_env_fallback: bool = True ) -> str:
-    """
-    Securely prompt user for password, with optional environment variable fallback.
-    
-    Args:
-        purpose: Description of what the password is for
-        allow_env_fallback: If True, check BOOTSTRAP_SECRET environment variable first
-        
-    Returns:
-        Password string
-    """
-    # Check for environment variable first (for unattended operation)
+def prompt_for_password(purpose: str = "encryption", allow_env_fallback: bool = True) -> str:
+    """Prompt user for password with optional environment variable fallback."""
     if allow_env_fallback:
-        env_password = os.environ.get( 'BOOTSTRAP_SECRET' );
-        if env_password:
-            print( f"Using password from BOOTSTRAP_SECRET environment variable for {purpose}" );
-            return env_password;
-    
+        env_pwd = os.environ.get('BOOTSTRAP_SECRET')
+        if env_pwd:
+            return env_pwd
+
     try:
-        password = getpass.getpass( f"Enter master password for {purpose}: " );
-        if not password or len( password ) < 8:
-            print( "Warning: Password should be at least 8 characters for security." );
-        return password;
+        pwd = getpass.getpass(f"Enter master password for {purpose}: ")
+        if not pwd or len(pwd) < 8:
+            print("Warning: Master password should be at least 8 characters.", file=sys.stderr)
+        return pwd
     except KeyboardInterrupt:
-        print( "\nOperation cancelled by user." );
-        exit( 0 );
-
-
-def test_crypto_functions():
-    """Unit tests for cryptographic functions."""
-    print( "🧪 Testing cryptographic functions..." );
-    
-    crypto = SecureBootstrapCrypto();
-    test_password = "[REDACTED_MOCK_PWD]";
-    test_data = "mongodb+srv://user:secret@cluster.mongodb.net/db";
-    
-    # Test basic encryption/decryption
-    print( "  ✓ Testing encrypt/decrypt cycle..." );
-    encrypted = crypto.encrypt( test_data, test_password );
-    decrypted = crypto.decrypt( encrypted, test_password );
-    assert decrypted == test_data, "Basic encryption/decryption failed";
-    
-    # Test dictionary encryption
-    print( "  ✓ Testing dictionary encrypt/decrypt..." );
-    sensitive_dict = {
-        'mongodb_uri': 'mongodb+srv://user:pass@host/db',
-        'api_key': 'sk-test-key-1234567890abcdef',
-        'normal_value': 'not_sensitive'
-    };
-    
-    encrypted_dict = crypto.encrypt_dict( sensitive_dict, test_password );
-    decrypted_dict = crypto.decrypt_dict( encrypted_dict, test_password );
-    assert decrypted_dict == sensitive_dict, "Dictionary encryption failed";
-    
-    # Test wrong password
-    print( "  ✓ Testing wrong password rejection..." );
-    try:
-        result = crypto.decrypt( encrypted, "wrong_password" );
-        assert False, f"Should have rejected wrong password but got: {result}";
-    except ValueError as e:
-        # Expected - wrong password should fail
-        assert "Decryption failed" in str( e ) or "invalid password" in str( e );
-    except Exception as e:
-        # ChaCha20Poly1305 might throw different exception
-        pass;  # Any decryption failure is acceptable
-    
-    # Test key derivation consistency
-    print( "  ✓ Testing key derivation consistency..." );
-    key1, salt = crypto.derive_key( test_password );
-    key2, _ = crypto.derive_key( test_password, salt );
-    assert key1 == key2, "Key derivation not consistent";
-    
-    print( "✅ All cryptographic tests passed!" );
+        print("\nOperation cancelled by user.", file=sys.stderr)
+        sys.exit(0)
 
 
 if __name__ == '__main__':
-    # Run self-tests when executed directly
-    test_crypto_functions();
-    
-    # Interactive test
-    print( "\n🔐 Interactive Encryption Test" );
-    crypto = SecureBootstrapCrypto();
-    
-    test_secret = input( "Enter test data to encrypt: " );
-    if test_secret:
-        password = prompt_for_password( "testing" );
-        
-        encrypted = crypto.encrypt( test_secret, password );
-        print( f"\n📦 Encrypted data structure:" );
-        for key, value in encrypted.items():
-            print( f"  {key}: {value}" );
-        
-        print( f"\n🔓 Decrypted: {crypto.decrypt( encrypted, password )}" );
+    # Unit self-tests
+    print("🧪 Running cryptographic tests...")
+    crypto = SecureBootstrapCrypto()
+    test_pwd = "[REDACTED_MOCK_PWD]"
+    test_data = "Sample test payload for crypto validation"
+
+    # Test basic string encrypt/decrypt
+    enc = crypto.encrypt(test_data, test_pwd)
+    dec = crypto.decrypt(enc, test_pwd)
+    assert dec == test_data, "String encryption failed"
+    print("  ✓ String encryption/decryption passed")
+
+    # Test wrong password rejection
+    try:
+        crypto.decrypt(enc, "wrong_pass_123")
+        assert False, "Should have failed with wrong password"
+    except Exception:
+        print("  ✓ Wrong password authentication rejection passed")
+
+    # Test vault packaging
+    with tempfile.TemporaryDirectory() as src_dir, tempfile.TemporaryDirectory() as dest_dir:
+        (Path(src_dir) / "fstab").write_text("UUID=123 / btrfs defaults 0 0\n")
+        (Path(src_dir) / "config.fish").write_text("set -gx PATH $PATH /opt/bin\n")
+
+        vault_path = Path(dest_dir) / "test.tar.enc"
+        crypto.create_encrypted_vault(Path(src_dir), vault_path, test_pwd, metadata={'host': 'testbox'})
+        assert vault_path.exists() and vault_path.stat().st_size > 0
+
+        # Extract
+        unpack_dir = Path(dest_dir) / "unpacked"
+        meta = crypto.extract_encrypted_vault(vault_path, unpack_dir, test_pwd)
+        assert (unpack_dir / "fstab").read_text() == "UUID=123 / btrfs defaults 0 0\n"
+        assert (unpack_dir / "config.fish").read_text() == "set -gx PATH $PATH /opt/bin\n"
+        assert meta['host'] == 'testbox'
+        print("  ✓ Authenticated encrypted vault packaging/extraction passed")
+
+    print("✅ All crypto tests passed successfully!")

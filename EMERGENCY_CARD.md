@@ -1,84 +1,47 @@
-# 🚨 EMERGENCY RECOVERY CARD
+# 🆘 EMERGENCY RECOVERY CARD
 
-**📱 PRINT THIS AND KEEP IT SAFE**
+Keep a copy of this card accessible (e.g. phone, password manager, printed).
 
 ---
 
-## **🆘 IF YOUR COMPUTER BREAKS OR IS STOLEN**
+## 🔐 Master Password
+*(Your memory-hard Argon2id encryption master key)*
 
-### **1. GET THE SCRIPT**
+---
+
+## ⚡ 3-Step Recovery from Fresh Install / Live USB
+
+### 1. Retrieve Encrypted Vault
+Get `bootstrap_vault_*.tar.enc` from:
+- Secondary Mount: `/run/media/michael/FAST_ARCHIVE/SystemBackups/`
+- Email: Download attachment from your email
+- Cloud: Google Drive / OneDrive (`Bootstrap_Backups`) or AWS S3
+- Git: `git clone git@github.com:mcollard0/bootstrap.git`
+
+### 2. Decrypt & Restore Configs
 ```bash
-# From GitHub (need SSH key setup first)
-git clone git@github.com:mcollard0/bootstrap.git
-
-# OR download directly via web browser:
-# https://github.com/mcollard0/bootstrap
-# → scripts/bootstrap_standalone.sh → Raw → Save As
+cd bootstrap
+python3 src/restore.py --vault bootstrap_vault_*.tar.enc
 ```
+*(Enter master password, choose option 2 to restore fstab, fish/bash dotfiles, SSH/GPG keys)*
 
-### **2. RUN ON FRESH UBUNTU**
+### 3. Reinstall Packages
 ```bash
-chmod +x bootstrap_standalone.sh
-sudo bash bootstrap_standalone.sh
-```
-
-### **3. ENTER MASTER PASSWORD**
-- Same password you used to encrypt secrets
-- **⚠️ NO PASSWORD = NO API KEYS RECOVERED**
-
----
-
-## **📋 RECOVERY CHECKLIST**
-- [ ] Fresh Ubuntu 24.04+ installed
-- [ ] Internet working  
-- [ ] Script downloaded from GitHub
-- [ ] `sudo bash bootstrap_standalone.sh`
-- [ ] Master password entered correctly
-- [ ] System rebooted after completion
-
----
-
-## **⏱️ TIMELINE**
-- **Download**: 1-2 minutes
-- **Install**: 20-30 minutes  
-- **Total**: ~30 minutes for complete restore
-
----
-
-## **🔍 VERIFY SUCCESS**
-```bash
-# After reboot:
-which google-chrome  # ✅ Should work
-which firefox        # ❌ Should be removed  
-env | grep API_KEY | wc -l  # Should show 5-6 keys
+sudo ./scripts/bootstrap.sh
 ```
 
 ---
 
-## **🔑 WHAT'S RESTORED**
-- **2,556 APT packages** (exact versions)
-- **108+ Python modules** 
-- **Chrome, Docker, VirtualBox**
-- **6 encrypted API keys**
-- **All environment variables**
-- **SSH keys & system configs**
+## 📌 Critical System Mounts
+- `/run/media/michael/FAST_ARCHIVE` (Btrfs)
+- `/run/media/michael/LARGE_ARCHIVE` (Btrfs)
+- `/run/media/michael/SLOW_ARCHIVE` (Ext4)
+- `/run/media/michael/SHARD_3`, `/run/media/michael/SHARD_4`, `/run/media/michael/SHARD_9` (Ext4)
 
 ---
 
-## **📞 REPOSITORY**
-- **URL**: `github.com/mcollard0/bootstrap`
-- **Script**: `scripts/bootstrap_standalone.sh`
-- **Private repo** - only you have access
-
----
-
-## **🆘 BACKUP METHODS**
-1. **USB**: Copy script to external drive
-2. **Email**: Email yourself the GitHub link
-3. **Print**: Print this card and DISASTER_RECOVERY.md
-
----
-
-**💾 ONE SCRIPT = COMPLETE SYSTEM RECOVERY**
-
-*Keep this card accessible for emergencies!*
+## 🛠️ Routine Backup Command
+To perform a complete scan, encrypted vault creation, and multi-cloud sync at any time:
+```bash
+./scripts/run_backup.sh
+```

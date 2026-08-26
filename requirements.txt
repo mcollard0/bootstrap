@@ -1,0 +1,9 @@
+# Bootstrap Project Dependencies
+# Python packages required for system scanning, encryption, and bootstrap generation
+
+# Cryptography libraries
+cryptography>=41.0.0
+argon2-cffi>=23.1.0
+
+# Additional useful packages
+# (None detected in current codebase - only stdlib modules used beyond crypto)

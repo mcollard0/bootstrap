@@ -1,175 +1,137 @@
-# Ubuntu Bootstrap System Architecture
+# Universal Bootstrap System Architecture
 
 ## Overview
-This system automates the process of capturing and restoring a complete Ubuntu system configuration, including packages, configurations, and sensitive data like API keys.
+The Universal Bootstrap System captures, encrypts, and synchronizes a complete Linux system configuration across untrusted cloud and local storage endpoints. It provides complete disaster recovery for **Arch Linux, CachyOS, and Ubuntu** systems.
 
-## System Components
+## System Architecture
 
-### Core Architecture
 ```
 bootstrap/
-├── src/                    # Python source code
-│   ├── crypto_utils.py     # ChaCha20-Poly1305 encryption utilities
-│   ├── bootstrap_scanner.py # System inventory scanner
-│   ├── generate_bootstrap.py # Bootstrap script generator
-│   └── make_backup.py      # Backup management
-├── scripts/                # Generated scripts
-│   ├── bootstrap.sh        # Main system restoration script
-│   ├── configure_keyboard_shortcuts.sh # Keyboard shortcuts configuration
-│   ├── configure_display_server.sh # Display server detection & configuration
-│   ├── generate_cron.sh    # Cron job setup
-│   └── git_auto_push.sh    # Automated git operations
-├── docs/                   # Documentation
-│   ├── architecture.md     # This file
-│   └── CONTRIBUTING.md     # Development guidelines
-├── backup/                 # Dated code backups
-├── data/                   # System inventory and encrypted data
-│   ├── inventory.json      # System state snapshot
-│   └── encrypted_secrets.bin # Encrypted sensitive data
-└── .git/                   # Version control
+├── config/
+│   └── destinations.example.json   # Destination configuration template
+├── src/
+│   ├── system_detector.py          # Auto-detects Distro (Arch/Ubuntu), Shell (Fish/Bash), DE (KDE/GNOME)
+│   ├── crypto_utils.py             # ChaCha20-Poly1305 + Argon2id authenticated vault packaging
+│   ├── bootstrap_scanner.py        # Orchestrates scanners, builds inventory, seals vault, and dispatches
+│   ├── generate_bootstrap.py       # Generates Arch (pacman/yay) or Ubuntu (apt/snap) restore scripts
+│   ├── restore.py                  # Standalone interactive disaster recovery & vault restoration tool
+│   ├── scanners/                   # Modular scanning subsystem
+│   │   ├── base_scanner.py         # Abstract scanner base class
+│   │   ├── distro_scanner.py       # Pacman/Yay/Paru (Arch) & APT/Snap (Ubuntu) scanner
+│   │   ├── shell_scanner.py        # Fish & Bash configs, functions, variables, MOTD, prompts
+│   │   ├── storage_scanner.py      # /etc/fstab, /etc/crypttab, lsblk UUIDs, Btrfs subvolumes
+│   │   ├── systemd_scanner.py      # Enabled system & user units and timers
+│   │   ├── network_scanner.py      # NetworkManager connections & WireGuard profiles
+│   │   ├── keys_scanner.py         # SSH, GPG, SSL certificates & private keys
+│   │   └── desktop_scanner.py      # KDE Plasma shortcuts & GNOME dconf settings
+│   └── storage/                    # Multi-destination untrusted storage subsystem
+│       ├── base_backend.py         # Base storage provider interface
+│       ├── storage_dispatcher.py   # Dispatches encrypted vault to all enabled destinations
+│       ├── s3_backend.py           # AWS S3 / Wasabi / Cloudflare R2 / MinIO backend
+│       ├── gdrive_backend.py       # Google Drive backend
+│       ├── onedrive_backend.py     # Microsoft OneDrive backend
+│       ├── email_backend.py        # SMTP email backend with encrypted attachment
+│       ├── local_backend.py        # Local & FAST_ARCHIVE drive destination
+│       └── rclone_backend.py       # Universal rclone integration
+├── scripts/
+│   ├── run_backup.sh               # Master one-step backup launcher
+│   ├── bootstrap.sh                # Main generated restoration script
+│   ├── add_secret.py               # Manage encrypted secrets and file storage
+│   ├── decrypt_secrets.py          # Decrypt and inspect environment variables
+│   ├── git_auto_push.sh            # Automated git commit and push
+│   └── setup_cron.sh               # Automated backup scheduling
+├── docs/
+│   ├── architecture.md             # This document
+│   ├── DISASTER_RECOVERY.md        # Root drive failure recovery procedures
+│   └── EMERGENCY_CARD.md           # Quick emergency cheatsheet
+└── data/
+    ├── destinations.json           # Active storage destinations configuration
+    ├── inventory.json              # Unencrypted system state snapshot (local inspection)
+    └── encrypted_secrets.json      # Encrypted secrets store
 ```
 
-## Database Schema (JSON Inventory)
+## Inventory Schema (Version 3.0)
 
-### Main Inventory Structure
 ```json
 {
-  "version": "1.0",
-  "timestamp": "2025-09-07T19:54:12Z",
-  "ubuntu_version": "25.04",
-  "hostname": "system-hostname",
+  "version": "3.0",
+  "timestamp": "2026-08-25T21:35:26.922996",
+  "system_info": {
+    "os": {
+      "id": "cachyos",
+      "family": "arch",
+      "pretty_name": "CachyOS",
+      "kernel": "7.2.0-1-cachyos",
+      "hostname": "michael-asus-03"
+    },
+    "package_managers": {
+      "primary": "pacman",
+      "aur_helper": "paru"
+    },
+    "shells": {
+      "current": "/bin/fish",
+      "default_name": "fish",
+      "has_fish_config": true,
+      "has_bash_config": true
+    },
+    "desktop": {
+      "name": "kde",
+      "session_type": "wayland"
+    }
+  },
   "packages": {
-    "apt": [{"name": "package", "version": "1.0", "status": "installed"}],
-    "snap": [{"name": "package", "version": "1.0", "channel": "stable"}],
-    "flatpak": [{"name": "app.id", "version": "1.0", "runtime": "runtime"}],
-    "python": [{"name": "module", "version": "1.0"}]
+    "arch_native": [{"name": "package", "version": "1.0"}],
+    "arch_aur": [{"name": "aur-package", "version": "1.0"}],
+    "apt": [],
+    "snap": [],
+    "flatpak": [],
+    "python_user": []
   },
-  "system_config": {
-    "sysctl": {"key": "value"},
-    "bashrc_additions": ["export VAR=value"],
-    "cron_jobs": ["0 3 * * * command"],
-    "keyboard_shortcuts": [{"name": "Run Dialog", "binding": "<Super>r", "command": "gnome-terminal ..."}]
+  "shells": {
+    "fish": {"exists": true, "functions": ["..."], "conf_d_files": []},
+    "bash": {"found_files": [".bashrc", ".bash_profile"]},
+    "motd": {"/etc/motd": {"exists": true}},
+    "prompts": {"starship": "~/.config/starship.toml"}
   },
-  "files": {
-    "ssh_keys": [{"path": "~/.ssh/id_ed25519.pub", "content": "key-data"}]
+  "storage": {
+    "fstab": {"exists": true, "entries": []},
+    "block_devices": [],
+    "archive_drives": [
+      {"label": "FAST_ARCHIVE", "fstype": "btrfs", "mountpoints": ["/run/media/michael/FAST_ARCHIVE"]},
+      {"label": "LARGE_ARCHIVE", "fstype": "btrfs", "mountpoints": ["/run/media/michael/LARGE_ARCHIVE"]}
+    ]
   },
-  "encrypted_refs": ["mongodb_uri", "gmail_password", "api_keys"]
+  "systemd": {
+    "system_enabled_units": [{"unit": "NetworkManager.service", "state": "enabled"}],
+    "user_enabled_units": [{"unit": "ydotool.service", "state": "enabled"}]
+  },
+  "network": {
+    "network_manager_connections": [],
+    "wireguard_profiles": []
+  },
+  "keys": {
+    "ssh_keys": [{"name": "id_ed25519", "is_public": false}],
+    "git": {"has_gitconfig": true}
+  }
 }
 ```
 
-### Sensitive Data Detection
-Regex patterns for identifying secrets:
-- API keys: `(api|key|token).*=.*[A-Za-z0-9+/]{20,}`
-- MongoDB URIs: `mongodb(\+srv)?://.*`
-- Email passwords: `gmail.*password.*=`
-- AWS credentials: `aws_(access|secret)_key`
+## Cryptographic Design & Untrusted Storage
 
-## Cryptographic Design
+### Vault Container Specifications
+- **Format**: `BOOTSTRAP_VAULT_V3\n<Base64-Metadata-JSON>\n<ChaCha20-Poly1305 Ciphertext>`
+- **Cipher**: ChaCha20-Poly1305 (AEAD)
+- **KDF**: Argon2id with automatic scrypt fallback
+- **Properties**:
+  - Authenticated Encryption: Any tampering with ciphertext immediately fails Poly1305 verification.
+  - Zero Metadata Leakage: Storage backends only receive random salt, nonce, and ciphertext. File paths, hostnames, and contents are completely obscured.
 
-### Encryption Algorithm
-- **Primary**: ChaCha20-Poly1305 (authenticated encryption)
-- **Key Derivation**: Argon2id (memory-hard, side-channel resistant)
-- **Parameters**: 
-  - Argon2id: 64MB memory, 3 iterations, 4 parallelism
-  - ChaCha20-Poly1305: 256-bit key, 96-bit nonce, 128-bit tag
+## Disaster Recovery Model
 
-### Security Properties
-- **Confidentiality**: ChaCha20 stream cipher
-- **Integrity**: Poly1305 MAC
-- **Authentication**: Combined AEAD
-- **Forward Secrecy**: New nonce per encryption
-- **Password Security**: Argon2id against brute force
-
-## API Endpoints
-N/A - This is a local system tool without network APIs.
-
-## Current Feature Status
-
-### ✅ Implemented
-- Project structure
-- Architecture documentation
-- Keyboard shortcuts configuration (Super+R for run dialog, Super+E for Nautilus)
-- Keyboard shortcuts scanning and inventory capture
-- Display server detection and configuration system (Wayland/X11)
-- Safe X11 configuration without immediate GUI restart
-- Dry run mode for non-invasive testing and extraction
-- Command-line argument parsing with argparse
-- Custom output directory support
-
-### 🚧 In Progress
-- Crypto utilities implementation
-- System scanner development
-
-### ⏳ Planned
-- Bootstrap script generation
-- Automated cron scheduling
-- Git repository integration
-- Testing and validation
-
-## Business Logic Rules
-
-### Package Management
-1. **Pre-installation checks**: Skip if package already installed
-2. **Firefox removal**: Actively remove if present during setup
-3. **Special packages**: Chrome, Warp Terminal, VirtualBox, Docker get explicit handling
-4. **Version pinning**: Python packages restored to exact versions
-
-### Configuration Restoration
-1. **Incremental updates**: Only apply changes that differ from defaults
-2. **Permission preservation**: SSH keys, config files maintain original permissions
-3. **Service management**: Restart services when configurations change
-4. **Desktop environment**: GNOME keyboard shortcuts configured via gsettings
-5. **Display server management**: Automatically detect and configure optimal display server (X11/Wayland) for compatibility
-
-### Security Handling
-1. **Encryption at rest**: All sensitive data encrypted in git repository
-2. **Memory safety**: Secrets cleared from memory after use
-3. **Password prompting**: Interactive password entry during restoration
-4. **No plaintext storage**: Secrets never stored in plaintext in repo
-
-### Dry Run Mode
-1. **Non-invasive operation**: Reads system state without modifying project directory
-2. **Default location**: `/tmp/bootstrap` for temporary extraction
-3. **Custom directories**: Supports `--output-dir` for user-specified locations
-4. **Directory structure**: Automatically creates `data/`, `scripts/`, and `backup/` subdirectories
-5. **Use cases**: Testing, new computer setup, preview before commit, sharing configurations
-
-## Current Migrations
-
-### Version 1.0 → 1.1 (Planned)
-- Add flatpak support
-- Enhance sysctl detection
-- Improve package version tracking
-
-## Known Issues/Constraints
-
-### Current Limitations
-- Ubuntu-specific (apt, snap ecosystem)
-- GNOME-specific keyboard shortcuts (other DEs not supported)
-- Requires manual password entry during restoration
-- SSH keys assumed to use Ed25519 format
-- Limited to local system analysis
-
-### Security Considerations
-- Master password must be remembered (no recovery mechanism)
-- Backup rotation may leave sensitive data in filesystem slack space
-- Cron jobs run with user privileges (not root)
-- Display server changes require reboot (prevents application interruption during deployment)
-
-## Development Guidelines
-
-### Code Style
-- Use spaces inside function/method () {} and []
-- Include semicolons to end statements (even in Python)
-- Prefer long lines over excessive wrapping
-- Follow user's established patterns
-
-### Backup Strategy
-- Create dated backups before major changes: `{name}.{iso-8601}.{ext}`
-- Maximum 50 backups for files <150KB, 25 for larger files
-- Automatic cleanup using LRU deletion
-
----
-
-*Last Updated: 2025-09-07*
-*Version: 1.0*
+1. **Root Drive Failure**: The system drive fails, but external bulk storage drives (`FAST_ARCHIVE`, `LARGE_ARCHIVE`) remain intact.
+2. **Reinstallation**: Install fresh base OS (Arch Linux, CachyOS, or Ubuntu).
+3. **Rescue Decryption**: `python3 src/restore.py --vault <vault_file>` prompts for password and restores:
+   - `/etc/fstab` and mount point directories (`mkdir -p /run/media/michael/FAST_ARCHIVE`)
+   - Shell dotfiles (`~/.config/fish/`, `~/.bashrc`)
+   - SSH and GPG security keys with chmod 600/700
+4. **Package Reinstallation**: `sudo ./scripts/bootstrap.sh` batch reinstalls all native and AUR packages.
