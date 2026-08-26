@@ -626,6 +626,8 @@ class EmergencyRestorer:
                         print(f"  ⚠️  Could not auto-install paru helper: {e}")
 
                 if aur_helper:
+                    # Prioritize critical interactive applications like chrome and warp first
+                    missing_aur.sort(key=lambda x: 0 if 'chrome' in x.lower() else (1 if 'warp' in x.lower() else 2))
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
                     flags = ['--needed', '--noconfirm']
                     if 'paru' in str(aur_helper):
