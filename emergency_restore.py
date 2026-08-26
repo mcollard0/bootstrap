@@ -502,11 +502,12 @@ class EmergencyRestorer:
             # Friendly symlinks for tools like Google Chrome
             chrome_bin = shutil.which('google-chrome-beta')
             if chrome_bin:
-                try:
-                    subprocess.run(['ln', '-sf', chrome_bin, '/usr/local/bin/chrome'], check=False)
-                    subprocess.run(['ln', '-sf', chrome_bin, '/usr/local/bin/google-chrome'], check=False)
-                except Exception:
-                    pass
+                for target_link in ['/usr/bin/chrome', '/usr/bin/google-chrome', '/usr/local/bin/chrome', '/usr/local/bin/google-chrome']:
+                    try:
+                        if not os.path.exists(target_link):
+                            subprocess.run(['ln', '-sf', chrome_bin, target_link], check=False)
+                    except Exception:
+                        pass
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
