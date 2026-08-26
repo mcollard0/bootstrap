@@ -141,8 +141,8 @@ class ShellScanner(BaseScanner):
                     real_path = Path(root) / f
                     collectible[f"system{real_path}"] = real_path
 
-        # Bash files
-        for bf in ['.bashrc', '.bash_profile', '.bash_aliases', '.profile']:
+        # Bash & Zsh files
+        for bf in ['.bashrc', '.bash_profile', '.bash_aliases', '.profile', '.zshrc']:
             p = self.user_home / bf
             if p.exists():
                 collectible[f"home/{bf}"] = p
