@@ -157,8 +157,23 @@ class EmergencyRestorer:
         self.detector = SystemDetector()
         self.current_os = self.detector.to_dict()
 
-        self.target_user = target_user or os.environ.get('SUDO_USER') or os.environ.get('USER') or 'michael'
-        self.user_home = Path(f"/home/{self.target_user}") if self.target_user != 'root' else Path('/root')
+        # Determine target non-root user (never use root for user files or AUR builds)
+        resolved_user = target_user or os.environ.get('SUDO_USER')
+        if not resolved_user or resolved_user == 'root':
+            env_user = os.environ.get('USER')
+            if env_user and env_user != 'root':
+                resolved_user = env_user
+        if not resolved_user or resolved_user == 'root':
+            import pwd
+            try:
+                pwd.getpwnam('michael')
+                resolved_user = 'michael'
+            except KeyError:
+                regular_users = [u.pw_name for u in pwd.getpwall() if u.pw_uid >= 1000 and u.pw_name != 'nobody']
+                resolved_user = regular_users[0] if regular_users else 'michael'
+
+        self.target_user = resolved_user
+        self.user_home = Path(f"/home/{self.target_user}")
 
     def inspect_vault(self, password: str) -> Tuple[Dict[str, Any], Path]:
         """Decrypt vault to temporary folder and read metadata and inventory."""
@@ -500,10 +515,11 @@ class EmergencyRestorer:
                         flags.append('--skipreview')
                     cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + missing_aur
                     try:
-                        # Auto-answer provider selection prompts with default choice (newline)
-                        aur_newlines = chr(10) * (len(missing_aur) * 5 + 100)
-                        subprocess.run(cmd, input=aur_newlines, text=True, check=False)
-                        print(f"  {GREEN}✅ AUR packages step completed.{NC}")
+                        res = subprocess.run(cmd, input=aur_newlines, text=True)
+                        if res.returncode == 0:
+                            print(f"  {GREEN}✅ AUR packages step completed.{NC}")
+                        else:
+                            print(f"  ⚠️  AUR installation finished with return code {res.returncode}.")
                     except Exception as e:
                         print(f"  ⚠️  AUR installation notice: {e}")
                 else:
