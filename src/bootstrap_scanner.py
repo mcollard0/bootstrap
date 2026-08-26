@@ -4,8 +4,9 @@ Bootstrap System - Universal System Scanner & Vault Creator
 
 Detects distribution (Arch/CachyOS vs Ubuntu/Debian), active shells (Fish, Bash),
 storage topology (/etc/fstab, UUIDs, Btrfs), systemd units, network configs, and keys.
-Compiles a comprehensive inventory, packages all configurations into an authenticated
-encrypted vault (ChaCha20-Poly1305 + Argon2id), and dispatches it to configured storage targets.
+Compiles a comprehensive inventory, generates a verified manifest (SHA-256 and SHA-1),
+packages all configurations into an authenticated encrypted vault (ChaCha20-Poly1305 + Argon2id / zstd),
+and dispatches it to configured storage targets.
 """
 
 import os
@@ -13,11 +14,13 @@ import sys
 import json
 import socket
 import shutil
+import hashlib
 import argparse
 import datetime
 import tempfile
+import subprocess
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Ensure src directory is in sys.path
 SRC_DIR = Path(__file__).parent
@@ -25,7 +28,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from system_detector import SystemDetector
-from crypto_utils import SecureBootstrapCrypto, prompt_for_password
+from crypto_utils import SecureBootstrapCrypto, prompt_for_password, HAS_ZSTD
 from scanners import (
     DistroPackageScanner,
     ShellScanner,
@@ -39,7 +42,7 @@ from storage import StorageDispatcher
 
 
 class UniversalSystemScanner:
-    """Orchestrates system inventory scanning, vault encryption, and backup dispatch."""
+    """Orchestrates system inventory scanning, manifest generation, vault encryption, and backup dispatch."""
 
     def __init__(self, base_dir: str = None):
         self.base_dir = Path(base_dir) if base_dir else SRC_DIR.parent
@@ -67,10 +70,10 @@ class UniversalSystemScanner:
         print("  📦 Scanning software packages...")
         packages = pkg_scanner.scan()
 
-        print("  🐚 Scanning shells (Fish, Bash, MOTD)...")
+        print("  🐚 Scanning shells (Fish, Bash, MOTD, System-wide)...")
         shells = shell_scanner.scan()
 
-        print("  💾 Scanning storage topology (/etc/fstab, UUIDs, mounts)...")
+        print("  💾 Scanning storage topology (/etc/fstab, UUIDs, crypttab)...")
         storage = storage_scanner.scan()
 
         print("  ⚙️  Scanning systemd services and timers...")
@@ -119,16 +122,50 @@ class UniversalSystemScanner:
 
         return all_files
 
+    def _generate_manifest(self, staged_files: List[Dict[str, Any]], hostname: str) -> Tuple[Dict[str, Any], str]:
+        """Generate manifest.json and manifest.txt with SHA-256 and SHA-1 checksums."""
+        timestamp = datetime.datetime.now().isoformat()
+        manifest_data = {
+            'version': '3.0',
+            'timestamp': timestamp,
+            'hostname': hostname,
+            'total_files': len(staged_files),
+            'files': staged_files
+        }
+
+        # Text manifest table
+        txt_lines = [
+            "=" * 120,
+            "BOOTSTRAP ENCRYPTED VAULT FILE MANIFEST",
+            f"Generated: {timestamp}",
+            f"Host:      {hostname}",
+            f"Files:     {len(staged_files)}",
+            "=" * 120,
+            f"{'PERMS':<6} {'SIZE':>10}  {'SHA256':<64}  {'VIRTUAL PATH':<35}",
+            "-" * 120
+        ]
+
+        for item in sorted(staged_files, key=lambda x: x['virtual_path']):
+            perms = item.get('mode', '0644')
+            sz = str(item.get('size_bytes', 0))
+            sha256 = item.get('sha256', '')
+            vp = item.get('virtual_path', '')
+            txt_lines.append(f"{perms:<6} {sz:>10}  {sha256:<64}  {vp}")
+
+        txt_lines.append("-" * 120)
+        return manifest_data, "\n".join(txt_lines) + "\n"
+
     def create_encrypted_vault(self, inventory: Dict[str, Any], password: str) -> Path:
         """
-        Stage inventory and configuration files into an authenticated encrypted vault.
+        Stage inventory, configuration files, and manifest into an authenticated encrypted vault.
         """
         timestamp_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         hostname = self.system_info.get('os', {}).get('hostname', 'unknown')
-        vault_filename = f"bootstrap_vault_{hostname}_{timestamp_str}.tar.enc"
+        ext = '.tar.zst.enc' if HAS_ZSTD else '.tar.gz.enc'
+        vault_filename = f"bootstrap_vault_{hostname}_{timestamp_str}{ext}"
         vault_path = self.backup_dir / vault_filename
 
-        print("\n🔐 Packaging files into encrypted vault container...")
+        print(f"\n🔐 Packaging files into encrypted vault container ({ext})...")
 
         with tempfile.TemporaryDirectory() as stage_dir:
             stage_path = Path(stage_dir)
@@ -142,21 +179,75 @@ class UniversalSystemScanner:
             collectible_files = self.collect_all_files()
             print(f"  📁 Staging {len(collectible_files)} configuration and key files...")
 
-            copied_count = 0
+            staged_manifest_entries = []
+
             for virt_rel_path, real_file in collectible_files.items():
+                target_file = stage_path / virt_rel_path
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                copied = False
+                file_bytes = b""
+                mode_str = "0644"
+
+                # Try regular copy
                 if real_file.exists() and real_file.is_file():
-                    target_file = stage_path / virt_rel_path
-                    target_file.parent.mkdir(parents=True, exist_ok=True)
                     try:
                         shutil.copy2(real_file, target_file)
-                        copied_count += 1
+                        copied = True
+                        file_bytes = real_file.read_bytes()
+                        mode_str = oct(real_file.stat().st_mode)[-4:]
+                    except PermissionError:
+                        # Try sudo -n fallback for root-only files like /etc/crypttab
+                        try:
+                            res = subprocess.run(['sudo', '-n', 'cat', str(real_file)], capture_output=True, check=True)
+                            target_file.write_bytes(res.stdout)
+                            copied = True
+                            file_bytes = res.stdout
+                            mode_str = "0600"
+                        except Exception:
+                            print(f"    ⚠️  Permission denied reading: {real_file}")
                     except Exception as e:
                         print(f"    ⚠️  Could not copy {real_file}: {e}")
 
-            # Also stage existing encrypted_secrets.json if present
+                if copied:
+                    staged_manifest_entries.append({
+                        'virtual_path': virt_rel_path,
+                        'source_path': str(real_file),
+                        'size_bytes': len(file_bytes),
+                        'mode': mode_str,
+                        'sha256': hashlib.sha256(file_bytes).hexdigest(),
+                        'sha1': hashlib.sha1(file_bytes).hexdigest()
+                    })
+
+            # Record inventory.json in manifest
+            inv_bytes = inv_file.read_bytes()
+            staged_manifest_entries.append({
+                'virtual_path': 'inventory.json',
+                'source_path': str(self.data_dir / 'inventory.json'),
+                'size_bytes': len(inv_bytes),
+                'mode': '0644',
+                'sha256': hashlib.sha256(inv_bytes).hexdigest(),
+                'sha1': hashlib.sha1(inv_bytes).hexdigest()
+            })
+
+            # Copy existing encrypted_secrets.json if present
             existing_secrets = self.data_dir / 'encrypted_secrets.json'
             if existing_secrets.exists():
                 shutil.copy2(existing_secrets, stage_path / 'encrypted_secrets.json')
+                sec_bytes = existing_secrets.read_bytes()
+                staged_manifest_entries.append({
+                    'virtual_path': 'encrypted_secrets.json',
+                    'source_path': str(existing_secrets),
+                    'size_bytes': len(sec_bytes),
+                    'mode': '0600',
+                    'sha256': hashlib.sha256(sec_bytes).hexdigest(),
+                    'sha1': hashlib.sha1(sec_bytes).hexdigest()
+                })
+
+            # Generate manifest.json & manifest.txt and save to staging
+            manifest_json, manifest_txt = self._generate_manifest(staged_manifest_entries, hostname)
+            (stage_path / 'manifest.json').write_text(json.dumps(manifest_json, indent=2), encoding='utf-8')
+            (stage_path / 'manifest.txt').write_text(manifest_txt, encoding='utf-8')
 
             # Create sealed vault
             metadata = {
@@ -164,13 +255,14 @@ class UniversalSystemScanner:
                 'distribution': self.system_info.get('os', {}).get('pretty_name'),
                 'os_family': self.system_info.get('os', {}).get('family'),
                 'created_at': datetime.datetime.now().isoformat(),
-                'total_files': copied_count + 1
+                'total_files': len(staged_manifest_entries) + 2  # plus manifest files
             }
 
-            self.crypto.create_encrypted_vault(stage_path, vault_path, password, metadata=metadata)
+            _, vault_meta = self.crypto.create_encrypted_vault(stage_path, vault_path, password, metadata=metadata)
 
         print(f"✅ Created encrypted vault: {vault_path.name}")
-        print(f"   Size: {vault_path.stat().st_size / (1024*1024):.2f} MB")
+        print(f"   Compression: {vault_meta.get('compression')} (ratio: {vault_meta.get('compression_ratio_percent')}%)")
+        print(f"   Size: {vault_path.stat().st_size / (1024*1024):.2f} MB ({vault_path.stat().st_size:,} bytes)")
         return vault_path
 
     def run(self, encrypt_and_dispatch: bool = True, custom_password: str = None) -> Dict[str, Any]:
@@ -202,7 +294,8 @@ class UniversalSystemScanner:
         else:
             print(f"   APT packages:             {apt_pkgs}")
         print(f"   Flatpaks:                 {flatpaks}")
-        print(f"   Fish shell configured:    {inventory['shells']['fish']['exists']}")
+        print(f"   Fish shell (user):        {inventory['shells']['fish']['exists']}")
+        print(f"   Fish shell (system /etc): {inventory['shells'].get('system_fish', {}).get('exists')}")
         print(f"   Bash shell files found:   {inventory['shells']['bash']['found_files']}")
         print(f"   Storage mounts captured:  {len(inventory['storage']['fstab'].get('entries', []))}")
         print(f"   Archive drives tracked:   {len(inventory['storage']['archive_drives'])}")

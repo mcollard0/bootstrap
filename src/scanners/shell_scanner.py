@@ -4,8 +4,9 @@ Shell & Environment Scanner
 
 Scans configuration files and environments for:
 - Fish shell (`~/.config/fish/config.fish`, `fish_variables`, `conf.d/`, `functions/`)
+- System-wide Fish configuration (`/etc/fish/config.fish`, `/etc/fish/conf.d/*.fish`)
 - Bash shell (`~/.bashrc`, `~/.bash_profile`, `~/.bash_aliases`, `~/.profile`)
-- MOTD & system greetings (`/etc/motd`, `/etc/issue`, `/etc/environment`)
+- MOTD & system greetings (`/etc/motd`, `/etc/issue`, `/etc/environment`, `/etc/shells`)
 - Prompt configuration (`~/.config/starship.toml`)
 - Detects sensitive environment variables (API keys, credentials, URIs)
 """
@@ -33,6 +34,7 @@ class ShellScanner(BaseScanner):
 
     def scan(self) -> Dict[str, Any]:
         fish_data, fish_secrets = self._scan_fish()
+        system_fish_data = self._scan_system_fish()
         bash_data, bash_secrets = self._scan_bash()
         motd_data = self._scan_motd()
         prompt_data = self._scan_prompts()
@@ -43,6 +45,7 @@ class ShellScanner(BaseScanner):
 
         return {
             'fish': fish_data,
+            'system_fish': system_fish_data,
             'bash': bash_data,
             'motd': motd_data,
             'prompts': prompt_data,
@@ -50,7 +53,7 @@ class ShellScanner(BaseScanner):
         }
 
     def _scan_fish(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Scan fish configuration files and variables."""
+        """Scan user fish configuration files and variables."""
         fish_dir = self.user_home / '.config/fish'
         info = {
             'exists': fish_dir.exists(),
@@ -91,6 +94,21 @@ class ShellScanner(BaseScanner):
 
         return info, secrets
 
+    def _scan_system_fish(self) -> Dict[str, Any]:
+        """Scan system-wide fish configuration in /etc/fish."""
+        etc_fish = Path('/etc/fish')
+        info = {
+            'exists': etc_fish.exists(),
+            'has_config': (etc_fish / 'config.fish').exists(),
+            'conf_d_files': []
+        }
+        if etc_fish.exists():
+            conf_d = etc_fish / 'conf.d'
+            if conf_d.exists():
+                for f in conf_d.glob('*.fish'):
+                    info['conf_d_files'].append(f.name)
+        return info
+
     def _scan_bash(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Scan bash configuration files."""
         bash_files = ['.bashrc', '.bash_profile', '.bash_aliases', '.profile']
@@ -106,8 +124,8 @@ class ShellScanner(BaseScanner):
         return {'found_files': found_files}, secrets
 
     def _scan_motd(self) -> Dict[str, Any]:
-        """Scan message of the day and login banners."""
-        motd_paths = ['/etc/motd', '/etc/issue', '/etc/issue.net', '/etc/environment']
+        """Scan message of the day, login banners, and shell registry."""
+        motd_paths = ['/etc/motd', '/etc/issue', '/etc/issue.net', '/etc/environment', '/etc/shells']
         motd_info = {}
 
         for mp in motd_paths:
@@ -165,6 +183,7 @@ class ShellScanner(BaseScanner):
         collectible = {}
         fish_dir = self.user_home / '.config/fish'
 
+        # User fish configs
         if fish_dir.exists():
             for root, _, files in os.walk(fish_dir):
                 for f in files:
@@ -172,14 +191,22 @@ class ShellScanner(BaseScanner):
                     rel_path = real_path.relative_to(self.user_home)
                     collectible[f"home/{rel_path}"] = real_path
 
+        # System-wide fish configs in /etc/fish
+        etc_fish = Path('/etc/fish')
+        if etc_fish.exists():
+            for root, _, files in os.walk(etc_fish):
+                for f in files:
+                    real_path = Path(root) / f
+                    collectible[f"system{real_path}"] = real_path
+
         # Bash files
         for bf in ['.bashrc', '.bash_profile', '.bash_aliases', '.profile']:
             p = self.user_home / bf
             if p.exists():
                 collectible[f"home/{bf}"] = p
 
-        # System MOTD & environment
-        for sys_file in ['/etc/motd', '/etc/issue', '/etc/environment']:
+        # System MOTD, environment, shells
+        for sys_file in ['/etc/motd', '/etc/issue', '/etc/environment', '/etc/shells']:
             p = Path(sys_file)
             if p.exists():
                 collectible[f"system{sys_file}"] = p

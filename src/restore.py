@@ -9,20 +9,22 @@ Standalone CLI tool to authenticate, decrypt, and selectively or fully restore:
 - Software packages (Pacman/AUR for Arch, APT/Snap for Ubuntu)
 - Network connections & systemd units
 
-Usage:
-    python3 src/restore.py --vault backup/bootstrap_vault_hostname_timestamp.tar.enc
-    python3 src/restore.py --list-backups
+Idempotent & non-breaking:
+- Compares SHA-256 before writing files; skips identical files
+- Uses `pacman -T` on Arch to only install missing packages (skips if already installed)
+- Non-destructively merges missing mount entries into `/etc/fstab`
 """
 
 import os
 import sys
 import json
 import shutil
+import hashlib
 import argparse
 import tempfile
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple, Optional
 
 # Ensure src directory is in sys.path
 SRC_DIR = Path(__file__).parent
@@ -32,9 +34,15 @@ if str(SRC_DIR) not in sys.path:
 from crypto_utils import SecureBootstrapCrypto, prompt_for_password
 from system_detector import SystemDetector
 
+GREEN = '\033[0;32m'
+YELLOW = '\033[1;33m'
+BLUE = '\033[0;34m'
+RED = '\033[0;31m'
+NC = '\033[0m'
+
 
 class BootstrapRestorer:
-    """Handles disaster recovery and restoration from an encrypted vault."""
+    """Handles idempotent disaster recovery and restoration from an encrypted vault."""
 
     def __init__(self, vault_path: str, target_user: str = None):
         self.vault_path = Path(vault_path).expanduser().resolve()
@@ -58,8 +66,45 @@ class BootstrapRestorer:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise e
 
+    def _file_matches_existing(self, src_file: Path, dest_file: Path) -> bool:
+        """Check if destination file exists and has identical SHA-256 hash."""
+        if not dest_file.exists():
+            return False
+        try:
+            return hashlib.sha256(src_file.read_bytes()).hexdigest() == hashlib.sha256(dest_file.read_bytes()).hexdigest()
+        except Exception:
+            return False
+
+    def _safe_copy_file(self, src_file: Path, dest_file: Path, mode: int = None) -> str:
+        """
+        Copy src_file to dest_file with idempotency check:
+        Returns: 'skipped' (already identical), 'created', 'updated'
+        """
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._file_matches_existing(src_file, dest_file):
+            return 'skipped'
+
+        status = 'created'
+        if dest_file.exists():
+            status = 'updated'
+            backup_path = dest_file.parent / f"{dest_file.name}.bak.{os.getpid()}"
+            try:
+                shutil.copy2(dest_file, backup_path)
+            except Exception:
+                pass
+
+        shutil.copy2(src_file, dest_file)
+        if mode:
+            try:
+                os.chmod(dest_file, mode)
+            except Exception:
+                pass
+        self._set_user_ownership(dest_file)
+        return status
+
     def restore_fstab_and_mounts(self, stage_dir: Path, apply_changes: bool = False):
-        """Restore /etc/fstab and create mount directories for archive drives."""
+        """Non-destructively merge missing /etc/fstab mount points and create mount dirs."""
         print("\n💾 Inspecting storage topology and /etc/fstab...")
         staged_fstab = stage_dir / "system/etc/fstab"
 
@@ -67,12 +112,24 @@ class BootstrapRestorer:
             print("  ⚠️  No /etc/fstab found in vault.")
             return
 
-        fstab_lines = staged_fstab.read_text(encoding='utf-8')
-        print(f"  ✓ Staged /etc/fstab contains {len(fstab_lines.splitlines())} lines.")
+        fstab_content = staged_fstab.read_text(encoding='utf-8')
 
-        # Identify mount directories in fstab
-        mount_dirs = []
-        for line in fstab_lines.splitlines():
+        # Parse current fstab mount points
+        existing_mounts = set()
+        current_fstab = Path('/etc/fstab')
+        if current_fstab.exists():
+            for line in current_fstab.read_text(encoding='utf-8').splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        existing_mounts.add(parts[1])
+
+        # Identify missing entries from vault
+        lines_to_add = []
+        mount_dirs_to_create = []
+
+        for line in fstab_content.splitlines():
             line_clean = line.strip()
             if not line_clean or line_clean.startswith('#'):
                 continue
@@ -80,43 +137,50 @@ class BootstrapRestorer:
             if len(parts) >= 2:
                 mp = parts[1]
                 if mp.startswith('/run/media/') or mp.startswith('/mnt/') or mp.startswith('/media/'):
-                    mount_dirs.append(mp)
+                    mount_dirs_to_create.append(mp)
+                if mp not in existing_mounts:
+                    lines_to_add.append(line)
 
-        print(f"  📁 Found {len(mount_dirs)} external archive mount points:")
-        for mp in mount_dirs:
+        print(f"  • External archive mount points in vault: {len(mount_dirs_to_create)}")
+        for mp in mount_dirs_to_create:
             exists = os.path.exists(mp)
-            print(f"     • {mp} ({'exists' if exists else 'missing - will create'})")
+            print(f"     • {mp} ({GREEN}exists{NC}" if exists else f"     • {mp} ({YELLOW}missing - will create{NC})")
+
+        print(f"  • Entries missing from /etc/fstab: {len(lines_to_add)}")
+        for l in lines_to_add:
+            print(f"     + {l}")
 
         if apply_changes:
-            # Create mount directories
-            for mp in mount_dirs:
-                try:
-                    os.makedirs(mp, exist_ok=True)
-                    print(f"     ✅ Created mount directory: {mp}")
-                except Exception as e:
-                    print(f"     ⚠️  Could not create {mp}: {e}")
+            # 1. Create missing directories
+            for mp in mount_dirs_to_create:
+                if not os.path.exists(mp):
+                    try:
+                        os.makedirs(mp, exist_ok=True)
+                        print(f"  {GREEN}✅ Created mount directory: {mp}{NC}")
+                    except Exception as e:
+                        print(f"  ⚠️  Could not create {mp}: {e}")
 
-            # Backup current /etc/fstab and overwrite/merge
-            if os.path.exists('/etc/fstab'):
-                backup_fstab = f"/etc/fstab.backup.{os.getpid()}"
+            # 2. Append missing fstab lines safely
+            if lines_to_add:
                 try:
-                    shutil.copy2('/etc/fstab', backup_fstab)
-                    print(f"  ✓ Backed up current /etc/fstab -> {backup_fstab}")
-                except Exception:
-                    pass
-
-            try:
-                shutil.copy2(staged_fstab, '/etc/fstab')
-                print("  ✅ Restored /etc/fstab successfully!")
-            except PermissionError:
-                print("  ⚠️  Need root/sudo privileges to write to /etc/fstab. Run with sudo or manually copy:")
-                print(f"     sudo cp {staged_fstab} /etc/fstab")
+                    # Backup fstab first
+                    shutil.copy2('/etc/fstab', f"/etc/fstab.bak.{os.getpid()}")
+                    with open('/etc/fstab', 'a', encoding='utf-8') as f:
+                        f.write("\n# Added by Bootstrap Disaster Recovery\n")
+                        for l in lines_to_add:
+                            f.write(f"{l}\n")
+                    print(f"  {GREEN}✅ Appended {len(lines_to_add)} missing mount lines to /etc/fstab{NC}")
+                except PermissionError:
+                    print(f"  {YELLOW}⚠️  Writing to /etc/fstab requires sudo/root.{NC}")
+                    print(f"     Run with sudo or append lines manually.")
+            else:
+                print(f"  {GREEN}✓ /etc/fstab is already up-to-date.{NC}")
 
     def restore_shell_configs(self, stage_dir: Path):
-        """Restore Fish and Bash dotfiles, variables, functions, and MOTD."""
+        """Idempotently restore Fish and Bash dotfiles, variables, functions, and MOTD."""
         print("\n🐚 Restoring Shell Configurations (Fish & Bash)...")
 
-        # 1. Restore Fish configuration
+        # 1. User Fish config
         staged_fish = stage_dir / "home/.config/fish"
         target_fish = self.user_home / ".config/fish"
 
@@ -127,41 +191,43 @@ class BootstrapRestorer:
                     src_f = Path(root) / f
                     rel_f = src_f.relative_to(staged_fish)
                     dest_f = target_fish / rel_f
-                    dest_f.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_f, dest_f)
-            self._set_user_ownership(target_fish)
-            print(f"  ✅ Restored Fish configuration -> {target_fish}")
+                    res = self._safe_copy_file(src_f, dest_f)
+                    if res == 'skipped':
+                        pass  # identical
+                    else:
+                        print(f"  {GREEN}✓ [{res.upper()}] Fish: {rel_f}{NC}")
+            print(f"  {GREEN}✅ Fish user configuration verified -> {target_fish}{NC}")
 
-        # 2. Restore Bash configuration
+        # 2. User Bash config
         for bf in ['.bashrc', '.bash_profile', '.bash_aliases', '.profile']:
             src_bf = stage_dir / f"home/{bf}"
             if src_bf.exists():
                 dest_bf = self.user_home / bf
-                shutil.copy2(src_bf, dest_bf)
-                self._set_user_ownership(dest_bf)
-                print(f"  ✅ Restored {bf} -> {dest_bf}")
+                res = self._safe_copy_file(src_bf, dest_bf)
+                if res != 'skipped':
+                    print(f"  {GREEN}✓ [{res.upper()}] Bash: {bf}{NC}")
 
-        # 3. Restore Prompts & Tools
+        # 3. System-wide /etc/fish config if available
+        staged_etc_fish = stage_dir / "system/etc/fish/config.fish"
+        if staged_etc_fish.exists() and os.path.exists('/etc/fish'):
+            target_etc = Path('/etc/fish/config.fish')
+            if not self._file_matches_existing(staged_etc_fish, target_etc):
+                try:
+                    shutil.copy2(staged_etc_fish, target_etc)
+                    print(f"  {GREEN}✓ Restored /etc/fish/config.fish{NC}")
+                except PermissionError:
+                    print(f"  ⚠️  Root required to restore /etc/fish/config.fish")
+
+        # 4. Starship prompt & Fastfetch
         starship_src = stage_dir / "home/.config/starship.toml"
         if starship_src.exists():
-            starship_dest = self.user_home / ".config/starship.toml"
-            starship_dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(starship_src, starship_dest)
-            self._set_user_ownership(starship_dest)
-            print(f"  ✅ Restored Starship prompt config -> {starship_dest}")
-
-        # 4. Restore MOTD & environment
-        for sys_f in ['/etc/motd', '/etc/issue', '/etc/environment']:
-            staged_sys = stage_dir / f"system{sys_f}"
-            if staged_sys.exists():
-                try:
-                    shutil.copy2(staged_sys, sys_f)
-                    print(f"  ✅ Restored {sys_f}")
-                except Exception:
-                    print(f"  ⚠️  Could not write {sys_f} (run as root/sudo to restore system files)")
+            dest = self.user_home / ".config/starship.toml"
+            res = self._safe_copy_file(starship_src, dest)
+            if res != 'skipped':
+                print(f"  {GREEN}✓ [{res.upper()}] Starship config{NC}")
 
     def restore_security_keys(self, stage_dir: Path):
-        """Restore SSH, GPG, and Git configurations with strict permissions."""
+        """Idempotently restore SSH, GPG, and Git configurations with strict permissions."""
         print("\n🔑 Restoring Security Keys & Credentials...")
 
         # 1. SSH directory
@@ -178,62 +244,46 @@ class BootstrapRestorer:
             for f in staged_ssh.iterdir():
                 if f.is_file():
                     dest_f = target_ssh / f.name
-                    shutil.copy2(f, dest_f)
-                    # Set proper permissions
-                    if f.suffix == '.pub' or f.name in ['config', 'known_hosts', 'authorized_keys']:
-                        os.chmod(dest_f, 0o644)
-                    else:
-                        os.chmod(dest_f, 0o600)  # Private keys
-                    self._set_user_ownership(dest_f)
+                    is_pub = f.suffix == '.pub' or f.name in ['config', 'known_hosts', 'authorized_keys']
+                    mode = 0o644 if is_pub else 0o600
+                    res = self._safe_copy_file(f, dest_f, mode=mode)
+                    if res != 'skipped':
+                        print(f"  {GREEN}✓ [{res.upper()}] SSH: {f.name} (mode {oct(mode)[-3:]}){NC}")
 
             self._set_user_ownership(target_ssh)
-            print(f"  ✅ Restored SSH keys with secure permissions (chmod 700/600) -> {target_ssh}")
+            print(f"  {GREEN}✅ SSH keys verified with strict permissions.{NC}")
 
         # 2. Git config
         staged_git = stage_dir / "home/.gitconfig"
         if staged_git.exists():
             dest_git = self.user_home / ".gitconfig"
-            shutil.copy2(staged_git, dest_git)
-            self._set_user_ownership(dest_git)
-            print(f"  ✅ Restored .gitconfig -> {dest_git}")
-
-        # 3. GPG configs
-        staged_gpg = stage_dir / "home/.gnupg"
-        target_gpg = self.user_home / ".gnupg"
-        if staged_gpg.exists():
-            target_gpg.mkdir(parents=True, exist_ok=True)
-            try:
-                os.chmod(target_gpg, 0o700)
-            except Exception:
-                pass
-            for f in staged_gpg.iterdir():
-                if f.is_file():
-                    dest_f = target_gpg / f.name
-                    shutil.copy2(f, dest_f)
-                    os.chmod(dest_f, 0o600)
-                    self._set_user_ownership(dest_f)
-            self._set_user_ownership(target_gpg)
-            print(f"  ✅ Restored GPG configuration -> {target_gpg}")
+            res = self._safe_copy_file(staged_git, dest_git)
+            if res != 'skipped':
+                print(f"  {GREEN}✓ [{res.upper()}] Git: .gitconfig{NC}")
 
     def restore_desktop_configs(self, stage_dir: Path):
-        """Restore KDE Plasma and desktop shortcut configurations."""
+        """Idempotently restore non-default KDE Plasma settings."""
         print("\n🖥️  Restoring Desktop & Window Manager Configurations...")
         staged_config = stage_dir / "home/.config"
         target_config = self.user_home / ".config"
 
         if staged_config.exists():
-            for kf in ['kglobalshortcutsrc', 'kwinrc', 'kdeglobals', 'khotkeysrc', 'plasmarc']:
+            kde_files = ['kglobalshortcutsrc', 'kwinrc', 'kdeglobals', 'kwinrulesrc', 'plasmarc', 'plasma-org.kde.plasma.desktop-appletsrc']
+            for kf in kde_files:
                 src_kf = staged_config / kf
                 if src_kf.exists():
                     dest_kf = target_config / kf
-                    dest_kf.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_kf, dest_kf)
-                    self._set_user_ownership(dest_kf)
-                    print(f"  ✅ Restored KDE setting: {kf}")
+                    res = self._safe_copy_file(src_kf, dest_kf)
+                    if res != 'skipped':
+                        print(f"  {GREEN}✓ [{res.upper()}] KDE: {kf}{NC}")
 
     def install_packages(self, inventory: Dict[str, Any]):
-        """Install software packages using pacman/yay or apt/snap."""
-        print("\n📦 Software Package Restoration...")
+        """
+        Idempotent package installation:
+        Uses `pacman -T` on Arch to check installed dependencies.
+        Skips packages that are already installed!
+        """
+        print("\n📦 Software Package Restoration (Idempotent)...")
         packages = inventory.get('packages', {})
         current_family = self.current_os.get('os', {}).get('family')
 
@@ -241,29 +291,49 @@ class BootstrapRestorer:
             native_pkgs = [p['name'] for p in packages.get('arch_native', []) if 'name' in p]
             aur_pkgs = [p['name'] for p in packages.get('arch_aur', []) if 'name' in p]
 
-            print(f"  Arch packages in inventory: {len(native_pkgs)} pacman, {len(aur_pkgs)} AUR")
-
+            # 1. Check native packages with pacman -T
+            missing_native = []
             if native_pkgs:
-                print(f"  Installing {len(native_pkgs)} pacman packages...")
-                cmd = ['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + native_pkgs
+                try:
+                    res = subprocess.run(['pacman', '-T'] + native_pkgs, capture_output=True, text=True)
+                    missing_native = [p.strip() for p in res.stdout.strip().split('\n') if p.strip()]
+                except Exception:
+                    missing_native = native_pkgs
+
+            if not missing_native:
+                print(f"  {GREEN}✓ All {len(native_pkgs)} native pacman packages are already installed.{NC}")
+            else:
+                print(f"  📦 Installing {len(missing_native)} missing native packages (out of {len(native_pkgs)})...")
+                cmd = ['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + missing_native
                 try:
                     subprocess.run(cmd, check=True)
-                    print("  ✅ Pacman packages installed successfully.")
+                    print(f"  {GREEN}✅ Missing native packages installed successfully.{NC}")
                 except Exception as e:
                     print(f"  ⚠️  Pacman installation error: {e}")
 
+            # 2. Check AUR packages with pacman -T
+            missing_aur = []
             if aur_pkgs:
+                try:
+                    res = subprocess.run(['pacman', '-T'] + aur_pkgs, capture_output=True, text=True)
+                    missing_aur = [p.strip() for p in res.stdout.strip().split('\n') if p.strip()]
+                except Exception:
+                    missing_aur = aur_pkgs
+
+            if not missing_aur:
+                print(f"  {GREEN}✓ All {len(aur_pkgs)} AUR packages are already installed.{NC}")
+            else:
                 aur_helper = shutil.which('paru') or shutil.which('yay')
                 if aur_helper:
-                    print(f"  Installing {len(aur_pkgs)} AUR packages via {Path(aur_helper).name}...")
-                    cmd = [aur_helper, '-S', '--needed', '--noconfirm'] + aur_pkgs
+                    print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
+                    cmd = [aur_helper, '-S', '--needed', '--noconfirm'] + missing_aur
                     try:
                         subprocess.run(cmd, check=True)
-                        print("  ✅ AUR packages installed successfully.")
+                        print(f"  {GREEN}✅ Missing AUR packages installed.{NC}")
                     except Exception as e:
                         print(f"  ⚠️  AUR installation error: {e}")
                 else:
-                    print(f"  ⚠️  No AUR helper (paru/yay) found. Install paru or yay to restore {len(aur_pkgs)} AUR packages.")
+                    print(f"  ⚠️  No AUR helper found. Missing AUR packages: {missing_aur}")
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
@@ -272,7 +342,6 @@ class BootstrapRestorer:
                 cmd = ['sudo', 'apt', 'install', '-y'] + apt_pkgs
                 try:
                     subprocess.run(cmd, check=True)
-                    print("  ✅ APT packages installed.")
                 except Exception as e:
                     print(f"  ⚠️  APT error: {e}")
 
@@ -287,8 +356,9 @@ class BootstrapRestorer:
 
     def run_interactive(self):
         """Run interactive restoration workflow."""
-        print("🚀 Bootstrap System - Vault Restoration & Disaster Recovery")
-        print("=============================================================")
+        print(f"\n{BLUE}============================================================={NC}")
+        print(f"{BLUE}🚀 Bootstrap System - Vault Restoration & Disaster Recovery{NC}")
+        print(f"{BLUE}============================================================={NC}")
         print(f"Target Vault: {self.vault_path}")
         print(f"Target User:  {self.target_user} (Home: {self.user_home})")
         print(f"Host System:  {self.current_os.get('os', {}).get('pretty_name')}\n")
@@ -298,16 +368,16 @@ class BootstrapRestorer:
         print("\n🔓 Authenticating and decrypting vault...")
         try:
             meta, stage_dir = self.inspect_vault(password)
-            print(f"✅ Authentication verified! Vault metadata:")
+            print(f"{GREEN}✅ Authentication verified! Vault metadata:{NC}")
             print(f"   Source Host: {meta.get('hostname')}")
             print(f"   Distribution: {meta.get('distribution')}")
+            print(f"   Compression:  {meta.get('compression')} (ratio: {meta.get('compression_ratio_percent', 0)}%)")
             print(f"   Created At:   {meta.get('created_at')}")
             print(f"   Total Files:  {meta.get('total_files')}")
         except Exception as e:
-            print(f"❌ Decryption failed: {e}", file=sys.stderr)
+            print(f"{RED}❌ Decryption failed: {e}{NC}", file=sys.stderr)
             sys.exit(1)
 
-        # Load inventory
         inv_file = stage_dir / "inventory.json"
         inventory = {}
         if inv_file.exists():
@@ -315,14 +385,13 @@ class BootstrapRestorer:
                 inventory = json.load(f)
 
         try:
-            # Menu
             print("\nSelect restoration actions:")
-            print("  1. Full Restoration (Storage/fstab, Shells, Keys, Desktop, Packages)")
-            print("  2. Restore Configuration & Keys only (fstab, Fish/Bash, SSH/GPG, Desktop)")
+            print("  1. Full Idempotent Restoration (Storage/fstab, Shells, Keys, Desktop, Missing Packages)")
+            print("  2. Restore Configuration & Keys only (fstab, Fish/Bash, SSH/GPG, Desktop) [RECOMMENDED]")
             print("  3. Restore Storage / Mounts & /etc/fstab only")
             print("  4. Restore Shell configs (Fish & Bash) only")
             print("  5. Restore SSH & Security Keys only")
-            print("  6. Install Software Packages only")
+            print("  6. Install Missing Software Packages only")
             print("  q. Quit")
 
             choice = input("\nEnter choice [1-6, default: 2]: ").strip() or "2"
@@ -350,7 +419,7 @@ class BootstrapRestorer:
                 print("Restoration cancelled.")
                 return
 
-            print("\n🎉 Restoration tasks completed successfully!")
+            print(f"\n{GREEN}🎉 Restoration tasks completed successfully!{NC}")
 
         finally:
             shutil.rmtree(stage_dir, ignore_errors=True)
@@ -358,7 +427,7 @@ class BootstrapRestorer:
 
 def main():
     parser = argparse.ArgumentParser(description="Bootstrap Vault Restoration Tool")
-    parser.add_argument('--vault', type=str, help="Path to encrypted vault (.tar.enc)")
+    parser.add_argument('--vault', type=str, help="Path to encrypted vault (.tar.zst.enc / .tar.enc)")
     parser.add_argument('--user', type=str, default=None, help="Target username (default: current user)")
     parser.add_argument('--list-backups', action='store_true', help="List local and archive backups")
 
@@ -370,7 +439,7 @@ def main():
         found = []
         for s_dir in search_dirs:
             if s_dir.exists():
-                for f in s_dir.glob('bootstrap_vault_*.tar.enc'):
+                for f in s_dir.glob('bootstrap_vault_*.tar.*enc'):
                     found.append((f, f.stat().st_size, f.stat().st_mtime))
 
         if not found:
@@ -383,14 +452,13 @@ def main():
 
     vault_path = args.vault
     if not vault_path:
-        # Look for most recent vault in ./backup
         backup_dir = Path('./backup')
-        vaults = sorted(backup_dir.glob('bootstrap_vault_*.tar.enc'), key=lambda x: x.stat().st_mtime, reverse=True)
+        vaults = sorted(backup_dir.glob('bootstrap_vault_*.tar.*enc'), key=lambda x: x.stat().st_mtime, reverse=True)
         if vaults:
             vault_path = str(vaults[0])
             print(f"ℹ️  No vault specified, using most recent: {vault_path}")
         else:
-            print("Error: Please specify --vault <path_to_vault.tar.enc>", file=sys.stderr)
+            print("Error: Please specify --vault <path_to_vault.tar.zst.enc>", file=sys.stderr)
             sys.exit(1)
 
     restorer = BootstrapRestorer(vault_path, target_user=args.user)

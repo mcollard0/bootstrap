@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Arch Linux / CachyOS Bootstrap Restoration Script
-# Generated: 2026-08-25T21:36:21.088205
+# Generated: 2026-08-26T08:52:05.394814
 # Source System: CachyOS
 #
 
@@ -72,24 +72,35 @@ main() {
     fi
     log_success "AUR helper available: $aur_helper"
 
-    # 4. Install Native Pacman Packages
-    log_info "📦 Installing native Arch packages (343 packages)..."
+    # 4. Check & Install Native Pacman Packages
     local native_packages=(7zip accountsservice alacritty alsa-firmware alsa-plugins alsa-utils amd-ucode anki ark awesome-terminal-fonts base-devel bash-completion bind bluedevil bluez bluez-hid2hci bluez-libs bluez-utils boost bpftune-git breeze-gtk btop btrfs-assistant btrfs-progs cachyos-emerald-kde-theme-git cachyos-fish-config cachyos-grub-theme cachyos-hello cachyos-hooks cachyos-iridescent-kde cachyos-kde-settings cachyos-kernel-manager cachyos-keyring cachyos-micro-settings cachyos-mirrorlist cachyos-nord-kde-theme-git cachyos-packageinstaller cachyos-plymouth-bootanimation cachyos-rate-mirrors cachyos-settings cachyos-themes-sddm cachyos-v3-mirrorlist cachyos-v4-mirrorlist cachyos-wallpapers cachyos-zsh-config cantarell-fonts char-white chntpw chwd cmake cockpit cockpit-machines code copyq cpu-x cpupower cryptsetup cuda cups cups-filters cups-pdf dcmtk device-mapper dhclient diffutils discord dkms dmidecode dmraid dnsmasq docker docker-buildx docker-compose dolphin dosfstools dotnet-sdk duf dust e2fsprogs efibootmgr efitools egl-wayland ethtool ex-vi-compat exfatprogs f2fs-tools fastfetch ffmpegthumbnailer ffmpegthumbs filelight firefox foomatic-db foomatic-db-engine foomatic-db-gutenprint-ppds foomatic-db-nonfree foomatic-db-nonfree-ppds foomatic-db-ppds freetds fsarchiver fwupd gdb gemini-cli ghostscript gimp git github-cli glances gopls gperf grub grub-btrfs-support grub-hook gsfonts gst-libav gst-plugin-pipewire gst-plugin-va gst-plugins-bad gst-plugins-ugly gutenprint gwenview haruna haveged hdparm hwdetect hwinfo hypnotix ifuse inetutils inotify-tools iptables iwd jellyfin-ffmpeg jellyfin-server jellyfin-web jfsutils kamoso kate kcalc kde-gtk-config kdeconnect kdegraphics-thumbnailers kdeplasma-addons kdialog kinfocenter kio-admin kio-gdrive konsole krdc krfb kscreen kwallet-pam kwalletmanager kwave less lib32-nvidia-utils lib32-opencl-nvidia lib32-vulkan-icd-loader lib32-vulkan-radeon libdvdcss libgsf libguestfs libopenraw libplasma libreoffice-fresh libva-nvidia-driver libwebsockets libwnck3 linux-cachyos linux-cachyos-headers linux-cachyos-lts linux-cachyos-lts-headers linux-cachyos-lts-nvidia-open linux-cachyos-nvidia-open logrotate lsb-release lsof lsscsi lvm2 man-db man-pages mariadb-libs mdadm meld mesa-utils micro mingw-w64-gcc miniupnpc mkinitcpio mkvtoolnix-cli modemmanager mtools nano nano-syntax-highlighting net-tools netctl networkmanager networkmanager-openvpn nfs-utils nginx nilfs-utils ninja nlohmann-json noto-color-emoji-fontconfig noto-fonts noto-fonts-cjk noto-fonts-emoji npm nss-mdns ntp nvidia-container-toolkit nvidia-prime nvidia-settings nvidia-utils nvtop obs-studio obsidian obsidian-icon-theme octopi ollama ollama-cuda opencl-nvidia openssh os-prober pacman-contrib partitionmanager paru pavucontrol perl phonon-qt6-vlc php-fpm picard pipewire-alsa pipewire-pulse pkgfile plasma-browser-integration plasma-desktop plasma-firewall plasma-integration plasma-nm plasma-pa plasma-systemmonitor plasma-thunderbolt plasma-workspace plocate plymouth plymouth-kcm poppler-glib postgresql-libs power-profiles-daemon powerdevil print-manager pv pyright python python-debugpy python-defusedxml python-packaging python-pillow python-pydicom python311 qemu-full qt6-wayland rebuild-detector reflector ripgrep rsync rtkit s-nail scrcpy sddm sddm-kcm sg3_utils sharutils smartmontools snapper snapshot sof-firmware spectacle sshfs sshpass sudo sysfsutils sysstat system-config-printer tailscale texinfo thefuck tmux tree-sitter-cli ttf-bitstream-vera ttf-dejavu ttf-liberation ttf-meslo-nerd ttf-opensans ufw unixodbc unrar unzip upower usb_modeswitch usbmuxd usbutils uv vim virt-manager virt-viewer vlc-plugins-all vulkan-headers vulkan-icd-loader vulkan-radeon warp-terminal warp-terminal-preview wget which wireless-regdb wireplumber wireshark-qt wl-clipboard wlr-randr wmctrl wpa_supplicant wtype xclip xdg-desktop-portal xdg-desktop-portal-kde xdg-user-dirs xdotool xf86-input-libinput xf86-video-amdgpu xfsprogs xl2tpd xorg-server xorg-xdpyinfo xorg-xinit xorg-xinput xorg-xkill xorg-xrandr xsel xsettingsd yay-bin ydotool zip zoxide)
     if [[ ${#native_packages[@]} -gt 0 ]]; then
-        # Install in batches of 50
-        for ((i=0; i<${#native_packages[@]}; i+=50)); do
-            local batch=("${native_packages[@]:i:50}")
-            pacman -S --needed --noconfirm "${batch[@]}" || log_warning "Some packages in batch failed to install."
-        done
-        log_success "Native packages installation step completed."
+        log_info "Checking which native packages are missing via pacman -T..."
+        local missing_native=($(pacman -T "${native_packages[@]}" 2>/dev/null || true))
+        if [[ ${#missing_native[@]} -eq 0 ]]; then
+            log_success "All ${#native_packages[@]} native packages are already installed - skipping."
+        else
+            log_info "Installing ${#missing_native[@]} missing native packages (out of ${#native_packages[@]})..."
+            for ((i=0; i<${#missing_native[@]}; i+=50)); do
+                local batch=("${missing_native[@]:i:50}")
+                pacman -S --needed --noconfirm "${batch[@]}" || log_warning "Some packages in batch failed to install."
+            done
+            log_success "Native packages installation step completed."
+        fi
     fi
 
-    # 5. Install AUR Packages
-    log_info "🌟 Installing AUR packages (29 packages)..."
+    # 5. Check & Install AUR Packages
     local aur_packages=(alizams-git antigravity-cli antigravity-ide beekeeper-studio-bin bridge-utils electron37 extundelete fladder-bin google-chrome-beta icaclient kdecodexbar mgrep moonfin-bin obs-pipewire-audio-capture ombi-bin openwebstart-bin oracle-instantclient-basic plex-media-server policycoreutils py-spy python-genanki-git python313 slack-desktop-wayland splix streamcontroller-git stremio virtio-win webkit2gtk zoom)
     if [[ ${#aur_packages[@]} -gt 0 ]]; then
-        sudo -u "$TARGET_USER" "$aur_helper" -S --needed --noconfirm "${aur_packages[@]}" || log_warning "Some AUR packages failed to install."
-        log_success "AUR packages installation step completed."
+        log_info "Checking which AUR packages are missing via pacman -T..."
+        local missing_aur=($(pacman -T "${aur_packages[@]}" 2>/dev/null || true))
+        if [[ ${#missing_aur[@]} -eq 0 ]]; then
+            log_success "All ${#aur_packages[@]} AUR packages are already installed - skipping."
+        else
+            log_info "Installing ${#missing_aur[@]} missing AUR packages via $aur_helper (out of ${#aur_packages[@]})..."
+            sudo -u "$TARGET_USER" "$aur_helper" -S --needed --noconfirm "${missing_aur[@]}" || log_warning "Some AUR packages failed to install."
+            log_success "AUR packages installation step completed."
+        fi
     fi
 
     # 6. Set user default shell to fish if installed

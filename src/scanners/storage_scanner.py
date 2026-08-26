@@ -7,6 +7,7 @@ Scans storage topology critical for disaster recovery:
 - Block device UUIDs, labels, filesystems (`lsblk -f -J` / `blkid`)
 - Archive mounts (`FAST_ARCHIVE`, `LARGE_ARCHIVE`, `SHARD_*`)
 - Btrfs subvolume layout
+- Console & Locale boot configs (`/etc/vconsole.conf`, `/etc/locale.conf`)
 """
 
 import json
@@ -26,13 +27,15 @@ class StorageScanner(BaseScanner):
         block_devices = self._scan_block_devices()
         btrfs_subvols = self._scan_btrfs_subvolumes()
         archive_drives = self._identify_archive_drives(block_devices)
+        boot_configs = self._scan_boot_configs()
 
         return {
             'fstab': fstab_content,
             'crypttab': crypttab_content,
             'block_devices': block_devices,
             'btrfs_subvolumes': btrfs_subvols,
-            'archive_drives': archive_drives
+            'archive_drives': archive_drives,
+            'boot_configs': boot_configs
         }
 
     def _read_fstab(self) -> Dict[str, Any]:
@@ -63,15 +66,25 @@ class StorageScanner(BaseScanner):
             return {'exists': True, 'error': str(e), 'content': '', 'entries': []}
 
     def _read_crypttab(self) -> Dict[str, Any]:
-        """Read /etc/crypttab if it exists."""
+        """Read /etc/crypttab if it exists, using sudo -n fallback if permission denied."""
         p = Path('/etc/crypttab')
         if not p.exists():
             return {'exists': False, 'content': ''}
 
+        content = ""
         try:
-            return {'exists': True, 'content': p.read_text(encoding='utf-8')}
+            content = p.read_text(encoding='utf-8')
+        except PermissionError:
+            try:
+                res = subprocess.run(['sudo', '-n', 'cat', str(p)], capture_output=True, text=True)
+                if res.returncode == 0:
+                    content = res.stdout
+            except Exception:
+                pass
         except Exception as e:
             return {'exists': True, 'error': str(e), 'content': ''}
+
+        return {'exists': True, 'content': content}
 
     def _scan_block_devices(self) -> List[Dict[str, Any]]:
         """Scan block devices with lsblk JSON output."""
@@ -104,6 +117,18 @@ class StorageScanner(BaseScanner):
             pass
 
         return []
+
+    def _scan_boot_configs(self) -> Dict[str, str]:
+        """Scan boot & locale configurations."""
+        configs = {}
+        for f in ['/etc/vconsole.conf', '/etc/locale.conf', '/etc/locale.gen', '/etc/mkinitcpio.conf', '/etc/pacman.conf']:
+            p = Path(f)
+            if p.exists() and p.is_file():
+                try:
+                    configs[f] = p.read_text(encoding='utf-8', errors='ignore')
+                except Exception:
+                    pass
+        return configs
 
     def _identify_archive_drives(self, block_devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Identify non-root data/archive drives."""
@@ -142,7 +167,16 @@ class StorageScanner(BaseScanner):
     def get_collectible_files(self) -> Dict[str, Path]:
         """Return files for vault inclusion."""
         collectible = {}
-        for f in ['/etc/fstab', '/etc/crypttab']:
+        candidate_files = [
+            '/etc/fstab',
+            '/etc/crypttab',
+            '/etc/vconsole.conf',
+            '/etc/locale.conf',
+            '/etc/locale.gen',
+            '/etc/mkinitcpio.conf',
+            '/etc/pacman.conf'
+        ]
+        for f in candidate_files:
             p = Path(f)
             if p.exists():
                 collectible[f"system{f}"] = p

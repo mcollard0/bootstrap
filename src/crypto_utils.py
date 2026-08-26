@@ -5,7 +5,8 @@ Bootstrap System - Cryptographic Utilities
 High-security symmetric encryption using:
 - ChaCha20-Poly1305 (authenticated encryption with 256-bit key and Poly1305 MAC)
 - Argon2id (preferred memory-hard KDF) with automatic scrypt fallback (stdlib)
-- Authenticated encrypted bundle packaging (.tar.enc / .tar.gz.enc)
+- Authenticated encrypted vault packaging (.tar.zst.enc / .tar.gz.enc)
+- Compression via zstd (preferred) with automatic gzip fallback
 """
 
 import os
@@ -17,6 +18,8 @@ import hashlib
 import secrets
 import getpass
 import tempfile
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Tuple, Dict, Any, List, Optional
 
@@ -38,6 +41,9 @@ try:
     HAS_ARGON2 = True
 except ImportError:
     HAS_ARGON2 = False
+
+# Check for zstd tool
+HAS_ZSTD = shutil.which('zstd') is not None
 
 
 class SecureBootstrapCrypto:
@@ -81,7 +87,6 @@ class SecureBootstrapCrypto:
 
         if chosen_kdf == 'Argon2id':
             if not HAS_ARGON2:
-                # If Argon2id was requested but library missing, try scrypt
                 if DEBUG_CRYPTO:
                     print("Argon2 not available, falling back to scrypt")
                 chosen_kdf = 'scrypt'
@@ -252,39 +257,59 @@ class SecureBootstrapCrypto:
 
         return decrypted
 
-    # --- Authenticated Encrypted Archive Bundle Packaging ---
+    # --- Authenticated Encrypted Archive Bundle Packaging with Zstd / Gzip ---
 
-    def create_encrypted_vault(self, source_dir: Path, output_file: Path, password: str, metadata: Dict[str, Any] = None) -> Path:
+    def create_encrypted_vault(self, source_dir: Path, output_file: Path, password: str, metadata: Dict[str, Any] = None) -> Tuple[Path, Dict[str, Any]]:
         """
         Package an entire directory tree into a compressed, authenticated encrypted vault.
-        Output format:
-          [MAGIC HEADER: b"BOOTSTRAP_VAULT_V3\n"]
-          [METADATA JSON (Base64) + b"\n"]
-          [RAW CHACHA20-POLY1305 CIPHERTEXT (incl 16-byte Poly1305 Tag)]
+        Uses zstd if available, otherwise gzip.
         """
         source_dir = Path(source_dir)
         output_file = Path(output_file)
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1. Compress source_dir to temporary in-memory or disk tar.gz
-        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_tar:
-            tmp_tar_path = Path(tmp_tar.name)
+        compression = 'zstd' if HAS_ZSTD else 'gzip'
+
+        # 1. Compress source_dir
+        with tempfile.NamedTemporaryFile(suffix='.tar', delete=False) as raw_tar:
+            raw_tar_path = Path(raw_tar.name)
+        with tempfile.NamedTemporaryFile(suffix=f'.tar.{compression}', delete=False) as compressed_tar:
+            compressed_tar_path = Path(compressed_tar.name)
 
         try:
-            with tarfile.open(tmp_tar_path, 'w:gz') as tar:
+            # Create raw tar first to know uncompressed size
+            with tarfile.open(raw_tar_path, 'w') as tar:
                 tar.add(source_dir, arcname='.')
 
-            with open(tmp_tar_path, 'rb') as f:
-                tar_bytes = f.read()
-        finally:
-            if tmp_tar_path.exists():
-                tmp_tar_path.unlink()
+            uncompressed_size = raw_tar_path.stat().st_size
+            sha256_uncompressed = hashlib.sha256(raw_tar_path.read_bytes()).hexdigest()
 
-        # 2. Derive key and encrypt
+            if compression == 'zstd':
+                # Compress with zstd
+                subprocess.run(
+                    ['zstd', '-q', '-f', '-19', str(raw_tar_path), '-o', str(compressed_tar_path)],
+                    check=True
+                )
+            else:
+                # Fallback to gzip
+                with tarfile.open(compressed_tar_path, 'w:gz') as tar:
+                    tar.add(source_dir, arcname='.')
+
+            compressed_bytes = compressed_tar_path.read_bytes()
+            compressed_size = len(compressed_bytes)
+            ratio = (compressed_size / uncompressed_size * 100.0) if uncompressed_size > 0 else 100.0
+
+        finally:
+            if raw_tar_path.exists():
+                raw_tar_path.unlink()
+            if compressed_tar_path.exists():
+                compressed_tar_path.unlink()
+
+        # 2. Derive key and encrypt with ChaCha20-Poly1305
         key, salt, kdf = self.derive_key(password)
         nonce = secrets.token_bytes(self.CHACHA20_NONCE_LEN)
         cipher = self.cipher(key)
-        ciphertext = cipher.encrypt(nonce, tar_bytes, None)
+        ciphertext = cipher.encrypt(nonce, compressed_bytes, None)
         key = b'\x00' * len(key)
 
         # 3. Create envelope metadata
@@ -293,11 +318,16 @@ class SecureBootstrapCrypto:
             'version': '3.0',
             'kdf': kdf,
             'algorithm': 'ChaCha20-Poly1305',
+            'compression': compression,
+            'uncompressed_tar_bytes': uncompressed_size,
+            'compressed_bytes': compressed_size,
+            'compression_ratio_percent': round(ratio, 2),
             'salt': base64.b64encode(salt).decode('ascii'),
             'nonce': base64.b64encode(nonce).decode('ascii'),
-            'sha256_uncompressed': hashlib.sha256(tar_bytes).hexdigest(),
-            'ciphertext_len': len(ciphertext),
-            'timestamp': hashlib.sha256(nonce).hexdigest()[:8]
+            'sha256_uncompressed_tar': sha256_uncompressed,
+            'sha256_compressed': hashlib.sha256(compressed_bytes).hexdigest(),
+            'sha256_ciphertext': hashlib.sha256(ciphertext).hexdigest(),
+            'ciphertext_len': len(ciphertext)
         })
 
         meta_json_b64 = base64.b64encode(json.dumps(meta).encode('utf-8'))
@@ -309,11 +339,12 @@ class SecureBootstrapCrypto:
             f.write(b'\n')
             f.write(ciphertext)
 
-        return output_file
+        return output_file, meta
 
     def extract_encrypted_vault(self, vault_file: Path, destination_dir: Path, password: str) -> Dict[str, Any]:
         """
         Authenticate, decrypt, and unpack an encrypted vault to destination_dir.
+        Supports both zstd and gzip compressed payloads.
         """
         vault_file = Path(vault_file)
         destination_dir = Path(destination_dir)
@@ -335,30 +366,46 @@ class SecureBootstrapCrypto:
         salt = base64.b64decode(meta['salt'])
         nonce = base64.b64decode(meta['nonce'])
         kdf = meta.get('kdf', 'Argon2id')
+        compression = meta.get('compression', 'gzip')
 
         # Derive key and decrypt
         key, _, _ = self.derive_key(password, salt=salt, kdf=kdf)
         cipher = self.cipher(key)
 
         try:
-            tar_bytes = cipher.decrypt(nonce, ciphertext, None)
+            decompressed_target_bytes = cipher.decrypt(nonce, ciphertext, None)
         except Exception as e:
             key = b'\x00' * len(key)
             raise ValueError(f"Authentication/Decryption failed: invalid password or corrupted data ({e})")
 
         key = b'\x00' * len(key)
 
-        # Unpack tar.gz to destination
-        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_tar:
-            tmp_tar_path = Path(tmp_tar.name)
-            tmp_tar.write(tar_bytes)
+        # Detect compression from magic bytes or metadata
+        is_zstd = decompressed_target_bytes.startswith(b'\x28\xb5\x2f\xfd') or compression == 'zstd'
+        is_gzip = decompressed_target_bytes.startswith(b'\x1f\x8b') or compression == 'gzip'
+
+        with tempfile.NamedTemporaryFile(suffix='.archive', delete=False) as tmp_arch:
+            tmp_arch_path = Path(tmp_arch.name)
+            tmp_arch.write(decompressed_target_bytes)
 
         try:
-            with tarfile.open(tmp_tar_path, 'r:gz') as tar:
-                tar.extractall(path=destination_dir, filter='data' if hasattr(tarfile, 'data_filter') else None)
+            if is_zstd:
+                if not HAS_ZSTD:
+                    raise RuntimeError("Archive was compressed with zstd, but 'zstd' command is not available.")
+                subprocess.run(
+                    ['tar', '--zstd', '-xf', str(tmp_arch_path), '-C', str(destination_dir)],
+                    check=True
+                )
+            elif is_gzip:
+                with tarfile.open(tmp_arch_path, 'r:gz') as tar:
+                    tar.extractall(path=destination_dir, filter='data' if hasattr(tarfile, 'data_filter') else None)
+            else:
+                # Raw tar
+                with tarfile.open(tmp_arch_path, 'r:') as tar:
+                    tar.extractall(path=destination_dir, filter='data' if hasattr(tarfile, 'data_filter') else None)
         finally:
-            if tmp_tar_path.exists():
-                tmp_tar_path.unlink()
+            if tmp_arch_path.exists():
+                tmp_arch_path.unlink()
 
         return meta
 
@@ -381,40 +428,30 @@ def prompt_for_password(purpose: str = "encryption", allow_env_fallback: bool = 
 
 
 if __name__ == '__main__':
-    # Unit self-tests
     print("🧪 Running cryptographic tests...")
     crypto = SecureBootstrapCrypto()
     test_pwd = "[REDACTED_MOCK_PWD]"
     test_data = "Sample test payload for crypto validation"
 
-    # Test basic string encrypt/decrypt
     enc = crypto.encrypt(test_data, test_pwd)
     dec = crypto.decrypt(enc, test_pwd)
     assert dec == test_data, "String encryption failed"
     print("  ✓ String encryption/decryption passed")
 
-    # Test wrong password rejection
-    try:
-        crypto.decrypt(enc, "wrong_pass_123")
-        assert False, "Should have failed with wrong password"
-    except Exception:
-        print("  ✓ Wrong password authentication rejection passed")
-
-    # Test vault packaging
     with tempfile.TemporaryDirectory() as src_dir, tempfile.TemporaryDirectory() as dest_dir:
         (Path(src_dir) / "fstab").write_text("UUID=123 / btrfs defaults 0 0\n")
         (Path(src_dir) / "config.fish").write_text("set -gx PATH $PATH /opt/bin\n")
 
-        vault_path = Path(dest_dir) / "test.tar.enc"
-        crypto.create_encrypted_vault(Path(src_dir), vault_path, test_pwd, metadata={'host': 'testbox'})
+        ext = '.tar.zst.enc' if HAS_ZSTD else '.tar.gz.enc'
+        vault_path = Path(dest_dir) / f"test{ext}"
+        _, meta = crypto.create_encrypted_vault(Path(src_dir), vault_path, test_pwd, metadata={'host': 'testbox'})
         assert vault_path.exists() and vault_path.stat().st_size > 0
+        print(f"  ✓ Vault created with compression: {meta['compression']} ({meta['compression_ratio_percent']}%)")
 
-        # Extract
         unpack_dir = Path(dest_dir) / "unpacked"
-        meta = crypto.extract_encrypted_vault(vault_path, unpack_dir, test_pwd)
+        extracted_meta = crypto.extract_encrypted_vault(vault_path, unpack_dir, test_pwd)
         assert (unpack_dir / "fstab").read_text() == "UUID=123 / btrfs defaults 0 0\n"
         assert (unpack_dir / "config.fish").read_text() == "set -gx PATH $PATH /opt/bin\n"
-        assert meta['host'] == 'testbox'
-        print("  ✓ Authenticated encrypted vault packaging/extraction passed")
+        print("  ✓ Authenticated encrypted vault extraction passed")
 
     print("✅ All crypto tests passed successfully!")

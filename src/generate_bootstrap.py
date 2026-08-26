@@ -149,24 +149,35 @@ main() {{
     fi
     log_success "AUR helper available: $aur_helper"
 
-    # 4. Install Native Pacman Packages
-    log_info "📦 Installing native Arch packages ({len(filtered_native)} packages)..."
+    # 4. Check & Install Native Pacman Packages
     local native_packages=({native_str})
     if [[ ${{#native_packages[@]}} -gt 0 ]]; then
-        # Install in batches of 50
-        for ((i=0; i<${{#native_packages[@]}}; i+=50)); do
-            local batch=("${{native_packages[@]:i:50}}")
-            pacman -S --needed --noconfirm "${{batch[@]}}" || log_warning "Some packages in batch failed to install."
-        done
-        log_success "Native packages installation step completed."
+        log_info "Checking which native packages are missing via pacman -T..."
+        local missing_native=($(pacman -T "${{native_packages[@]}}" 2>/dev/null || true))
+        if [[ ${{#missing_native[@]}} -eq 0 ]]; then
+            log_success "All ${{#native_packages[@]}} native packages are already installed - skipping."
+        else
+            log_info "Installing ${{#missing_native[@]}} missing native packages (out of ${{#native_packages[@]}})..."
+            for ((i=0; i<${{#missing_native[@]}}; i+=50)); do
+                local batch=("${{missing_native[@]:i:50}}")
+                pacman -S --needed --noconfirm "${{batch[@]}}" || log_warning "Some packages in batch failed to install."
+            done
+            log_success "Native packages installation step completed."
+        fi
     fi
 
-    # 5. Install AUR Packages
-    log_info "🌟 Installing AUR packages ({len(aur_pkgs)} packages)..."
+    # 5. Check & Install AUR Packages
     local aur_packages=({aur_str})
     if [[ ${{#aur_packages[@]}} -gt 0 ]]; then
-        sudo -u "$TARGET_USER" "$aur_helper" -S --needed --noconfirm "${{aur_packages[@]}}" || log_warning "Some AUR packages failed to install."
-        log_success "AUR packages installation step completed."
+        log_info "Checking which AUR packages are missing via pacman -T..."
+        local missing_aur=($(pacman -T "${{aur_packages[@]}}" 2>/dev/null || true))
+        if [[ ${{#missing_aur[@]}} -eq 0 ]]; then
+            log_success "All ${{#aur_packages[@]}} AUR packages are already installed - skipping."
+        else
+            log_info "Installing ${{#missing_aur[@]}} missing AUR packages via $aur_helper (out of ${{#aur_packages[@]}})..."
+            sudo -u "$TARGET_USER" "$aur_helper" -S --needed --noconfirm "${{missing_aur[@]}}" || log_warning "Some AUR packages failed to install."
+            log_success "AUR packages installation step completed."
+        fi
     fi
 
     # 6. Set user default shell to fish if installed

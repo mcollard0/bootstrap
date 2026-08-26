@@ -3,7 +3,7 @@
 Desktop Environment Scanner
 
 Scans:
-- KDE Plasma configurations (`kglobalshortcutsrc`, `kwinrc`, `kdeglobals`, `khotkeysrc`)
+- KDE Plasma non-default configurations (`kglobalshortcutsrc`, `kwinrc`, `kdeglobals`, `kwinrulesrc`, `kcminputrc`, `plasmashellrc`, `plasma-org.kde.plasma.desktop-appletsrc`)
 - GNOME dconf / gsettings shortcuts (if running GNOME)
 - Terminal configurations (kitty, alacritty, warp, foot, wezterm)
 """
@@ -17,7 +17,19 @@ from .base_scanner import BaseScanner
 
 
 class DesktopScanner(BaseScanner):
-    """Scans desktop shortcuts, window manager rules, and terminal configs."""
+    """Scans desktop shortcuts, window manager rules, and terminal configs, filtering transient state."""
+
+    # Essential user customization files (skipping caches like klipperrc, katemetainfos, kactivitymanagerdrc)
+    KDE_USER_CUSTOMIZATIONS = [
+        'kglobalshortcutsrc',                      # User keyboard shortcuts
+        'kdeglobals',                              # User color scheme, widget theme, fonts
+        'kwinrc',                                 # Window manager behavior, effects, titlebars
+        'kwinrulesrc',                            # Specific window rules
+        'kcminputrc',                             # Mouse, keyboard repeat, touchpad gestures
+        'plasmashellrc',                          # Plasma shell layout
+        'plasma-org.kde.plasma.desktop-appletsrc',# User desktop applets, widgets, and panels
+        'plasmarc'                                # Plasma theme overrides
+    ]
 
     def scan(self) -> Dict[str, Any]:
         de_type = self.system_info.get('desktop', {}).get('name', 'unknown')
@@ -33,24 +45,16 @@ class DesktopScanner(BaseScanner):
         }
 
     def _scan_kde(self) -> Dict[str, Any]:
-        """Scan KDE Plasma configuration files."""
-        kde_files = [
-            'kglobalshortcutsrc',
-            'kwinrc',
-            'kdeglobals',
-            'khotkeysrc',
-            'plasma-org.kde.plasma.desktop-appletsrc',
-            'plasmarc'
-        ]
+        """Scan KDE Plasma configuration files that contain non-default user settings."""
         found = []
-        for kf in kde_files:
+        for kf in self.KDE_USER_CUSTOMIZATIONS:
             p = self.user_home / f'.config/{kf}'
-            if p.exists():
+            if p.exists() and p.is_file() and p.stat().st_size > 0:
                 found.append({
                     'file': kf,
                     'size': p.stat().st_size
                 })
-        return {'found_files': found}
+        return {'custom_configs': found}
 
     def _scan_gnome(self) -> Dict[str, Any]:
         """Scan GNOME gsettings shortcuts."""
@@ -88,20 +92,13 @@ class DesktopScanner(BaseScanner):
         return terminals
 
     def get_collectible_files(self) -> Dict[str, Path]:
-        """Return desktop and terminal config files for backup."""
+        """Return non-default desktop and terminal config files for backup."""
         collectible = {}
 
-        # KDE files
-        kde_files = [
-            'kglobalshortcutsrc',
-            'kwinrc',
-            'kdeglobals',
-            'khotkeysrc',
-            'plasmarc'
-        ]
-        for kf in kde_files:
+        # KDE non-default customization files only
+        for kf in self.KDE_USER_CUSTOMIZATIONS:
             p = self.user_home / f'.config/{kf}'
-            if p.exists():
+            if p.exists() and p.is_file() and p.stat().st_size > 0:
                 collectible[f"home/.config/{kf}"] = p
 
         # Terminals
