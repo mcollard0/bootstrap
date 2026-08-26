@@ -225,6 +225,14 @@ class EmergencyRestorer:
         self.target_user = resolved_user
         self.user_home = Path(f"/home/{self.target_user}")
 
+        # In a Live ISO environment, auto-expand tmpfs cowspace to 32G to prevent out-of-space issues
+        cowspace = Path('/run/archiso/cowspace')
+        if cowspace.exists() and os.geteuid() == 0:
+            try:
+                subprocess.run(['mount', '-o', 'remount,size=32G', '/run/archiso/cowspace'], check=False)
+            except Exception:
+                pass
+
     def inspect_vault(self, password: str) -> Tuple[Dict[str, Any], Path]:
         """Decrypt vault to temporary folder and read metadata and inventory."""
         tmp_dir = Path(tempfile.mkdtemp(prefix="bootstrap_restore_"))
@@ -624,14 +632,29 @@ class EmergencyRestorer:
                         if res.returncode == 0:
                             print(f"  {GREEN}✅ AUR packages step completed.{NC}")
                         else:
-                            print(f"  ⚠️  AUR installation finished with return code {res.returncode}.")
+                            print(f"  ⚠️  AUR batch finished with return code {res.returncode}. Switching to resilient item-by-item AUR installation...")
+                            for aur_pkg in missing_aur:
+                                item_cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + [aur_pkg]
+                                try:
+                                    subprocess.run(item_cmd, input=aur_newlines, text=True)
+                                except Exception:
+                                    pass
                     except Exception as e:
                         print(f"  ⚠️  AUR installation notice: {e}")
                 else:
                     print(f"  ⚠️  No AUR helper available. Missing AUR/custom packages: {missing_aur}")
 
-            # Friendly symlinks for tools like Google Chrome
-            chrome_bin = shutil.which('google-chrome-beta')
+            # Explicit verification & installation for critical developer applications: Chrome & Warp
+            print(f"\n🌐 Verifying Developer Applications (Google Chrome & Warp Terminal)...")
+            chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
+            if not chrome_bin and aur_helper:
+                print(f"  🌟 Installing Google Chrome Beta via {Path(aur_helper).name}...")
+                try:
+                    subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S', '--needed', '--noconfirm', '--skipreview', '--noprovides', 'google-chrome-beta'], input=chr(10)*20, text=True, check=False)
+                    chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
+                except Exception as e:
+                    print(f"  ⚠️  Google Chrome installation notice: {e}")
+
             if chrome_bin:
                 for target_link in ['/usr/bin/chrome', '/usr/bin/google-chrome', '/usr/local/bin/chrome', '/usr/local/bin/google-chrome']:
                     try:
@@ -639,6 +662,29 @@ class EmergencyRestorer:
                             subprocess.run(['ln', '-sf', chrome_bin, target_link], check=False)
                     except Exception:
                         pass
+                print(f"  {GREEN}✅ Google Chrome is verified and runnable: {chrome_bin}{NC}")
+            else:
+                print(f"  ⚠️  Google Chrome binary not found.")
+
+            warp_bin = shutil.which('warp-terminal') or shutil.which('warp-terminal-preview') or shutil.which('warp')
+            if not warp_bin:
+                print(f"  🌟 Installing Warp Terminal via pacman...")
+                try:
+                    subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'warp-terminal'], check=False)
+                    warp_bin = shutil.which('warp-terminal') or shutil.which('warp-terminal-preview') or shutil.which('warp')
+                except Exception as e:
+                    print(f"  ⚠️  Warp Terminal installation notice: {e}")
+
+            if warp_bin:
+                for target_link in ['/usr/bin/warp', '/usr/local/bin/warp']:
+                    try:
+                        if not os.path.exists(target_link):
+                            subprocess.run(['ln', '-sf', warp_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Warp Terminal is verified and runnable: {warp_bin}{NC}")
+            else:
+                print(f"  ⚠️  Warp Terminal binary not found.")
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
