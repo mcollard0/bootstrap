@@ -336,6 +336,27 @@ class EmergencyRestorer:
                 if str(rel_f) == "etc/fstab":
                     continue
 
+                # Ensure custom repos in pacman.conf don't fail due to PGP trust issues
+                if str(rel_f) == "etc/pacman.conf":
+                    try:
+                        pconf_text = src_f.read_text(encoding='utf-8')
+                        for repo_tag in ['[warpdotdev]', '[warpdotdev-preview]']:
+                            if repo_tag in pconf_text and f"{repo_tag}\nSigLevel" not in pconf_text:
+                                pconf_text = pconf_text.replace(f"{repo_tag}\n", f"{repo_tag}\nSigLevel = Optional TrustAll\n")
+                        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_pconf:
+                            tmp_pconf.write(pconf_text)
+                            tmp_pconf_path = Path(tmp_pconf.name)
+                        try:
+                            res = self._safe_copy_file(tmp_pconf_path, dest_f)
+                        finally:
+                            tmp_pconf_path.unlink()
+                        if res != 'skipped':
+                            print(f"  {GREEN}+ [{res.upper()}]{NC} /etc/pacman.conf (with SigLevel hardening)")
+                            subprocess.run(['sudo', 'pacman', '-Sy'], check=False)
+                        continue
+                    except Exception as e:
+                        print(f"  ⚠️  Notice on pacman.conf: {e}")
+
                 try:
                     res = self._safe_copy_file(src_f, dest_f)
                     if res == 'skipped':
@@ -417,16 +438,28 @@ class EmergencyRestorer:
                 print(f"  {GREEN}✓ All AUR packages are already installed.{NC}")
             else:
                 aur_helper = shutil.which('paru') or shutil.which('yay')
+                if not aur_helper:
+                    print(f"  🌟 Installing paru from AUR...")
+                    try:
+                        tmp_paru = tempfile.mkdtemp(prefix="paru_install_")
+                        self._set_user_ownership(Path(tmp_paru))
+                        subprocess.run(['sudo', '-u', self.target_user, 'git', 'clone', 'https://aur.archlinux.org/paru-bin.git', f"{tmp_paru}/paru-bin"], check=True)
+                        subprocess.run(['sudo', '-u', self.target_user, 'makepkg', '-si', '--noconfirm'], cwd=f"{tmp_paru}/paru-bin", check=True)
+                        shutil.rmtree(tmp_paru, ignore_errors=True)
+                        aur_helper = shutil.which('paru')
+                    except Exception as e:
+                        print(f"  ⚠️  Could not auto-install paru helper: {e}")
+
                 if aur_helper:
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
-                    cmd = [aur_helper, '-S', '--needed', '--noconfirm'] + missing_aur
+                    cmd = ['sudo', '-u', self.target_user, aur_helper, '-S', '--needed', '--noconfirm'] + missing_aur
                     try:
                         subprocess.run(cmd, check=False)
                         print(f"  {GREEN}✅ AUR packages step completed.{NC}")
                     except Exception as e:
                         print(f"  ⚠️  AUR installation notice: {e}")
                 else:
-                    print(f"  ⚠️  No AUR helper found. Missing AUR/custom packages: {missing_aur}")
+                    print(f"  ⚠️  No AUR helper available. Missing AUR/custom packages: {missing_aur}")
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
