@@ -419,7 +419,7 @@ class EmergencyRestorer:
                 except Exception as e:
                     print(f"  ⚠️  APT error: {e}")
 
-    def run_interactive(self, skip_confirmation: bool = False):
+    def run_interactive(self, skip_confirmation: bool = False, password: str = None):
         """Run interactive restoration workflow."""
         print_emergency_banner()
 
@@ -431,20 +431,29 @@ class EmergencyRestorer:
         print(f"Target User:  {self.target_user} (Home: {self.user_home})")
         print(f"Host System:  {self.current_os.get('os', {}).get('pretty_name')}\n")
 
-        password = prompt_for_password("vault decryption")
+        max_attempts = 1 if password else 3
+        stage_dir = None
+        meta = None
 
-        print("\n🔓 Authenticating and decrypting vault...")
-        try:
-            meta, stage_dir = self.inspect_vault(password)
-            print(f"{GREEN}✅ Authentication verified! Vault metadata:{NC}")
-            print(f"   Source Host: {meta.get('hostname')}")
-            print(f"   Distribution: {meta.get('distribution')}")
-            print(f"   Compression:  {meta.get('compression')} (ratio: {meta.get('compression_ratio_percent', 0)}%)")
-            print(f"   Created At:   {meta.get('created_at')}")
-            print(f"   Total Files:  {meta.get('total_files')}")
-        except Exception as e:
-            print(f"{RED}❌ Decryption failed: {e}{NC}", file=sys.stderr)
-            sys.exit(1)
+        for attempt in range(1, max_attempts + 1):
+            current_password = password or prompt_for_password("vault decryption")
+            print("\n🔓 Authenticating and decrypting vault...")
+            try:
+                meta, stage_dir = self.inspect_vault(current_password)
+                print(f"{GREEN}✅ Authentication verified! Vault metadata:{NC}")
+                print(f"   Source Host: {meta.get('hostname')}")
+                print(f"   Distribution: {meta.get('distribution')}")
+                print(f"   Compression:  {meta.get('compression')} (ratio: {meta.get('compression_ratio_percent', 0)}%)")
+                print(f"   Created At:   {meta.get('created_at')}")
+                print(f"   Total Files:  {meta.get('total_files')}")
+                break
+            except Exception as e:
+                print(f"{RED}❌ Decryption failed: {e}{NC}", file=sys.stderr)
+                if attempt < max_attempts:
+                    print(f"{YELLOW}⚠️  Incorrect password or typo. Please try again ({attempt}/{max_attempts}). Check Caps Lock!{NC}\n")
+                else:
+                    print(f"{RED}💥 Maximum decryption attempts exceeded.{NC}", file=sys.stderr)
+                    sys.exit(1)
 
         inv_file = stage_dir / "inventory.json"
         inventory = {}
@@ -516,6 +525,7 @@ def main():
     parser = argparse.ArgumentParser(description="Universal Linux Bootstrap - Emergency System Restoration Tool")
     parser.add_argument('--vault', type=str, help="Path to encrypted vault (.tar.zst.enc / .tar.enc)")
     parser.add_argument('--user', type=str, default=None, help="Target username (default: current user)")
+    parser.add_argument('--password', '-p', type=str, default=None, help="Vault decryption password (or set BOOTSTRAP_SECRET env var)")
     parser.add_argument('--yes', '-y', action='store_true', help="Skip countdown confirmation prompt")
     parser.add_argument('--list-backups', action='store_true', help="List local and archive backups")
 
@@ -555,7 +565,7 @@ def main():
             sys.exit(1)
 
     restorer = EmergencyRestorer(vault_path, target_user=args.user)
-    restorer.run_interactive(skip_confirmation=args.yes)
+    restorer.run_interactive(skip_confirmation=args.yes, password=args.password)
 
 
 if __name__ == '__main__':
