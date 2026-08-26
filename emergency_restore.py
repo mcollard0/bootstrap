@@ -377,10 +377,10 @@ class EmergencyRestorer:
                 # Ensure custom repos in pacman.conf don't fail due to PGP trust issues
                 if str(rel_f) == "etc/pacman.conf":
                     try:
+                        import re
                         pconf_text = src_f.read_text(encoding='utf-8')
-                        for repo_tag in ['[warpdotdev]', '[warpdotdev-preview]']:
-                            if repo_tag in pconf_text and f"{repo_tag}\nSigLevel" not in pconf_text:
-                                pconf_text = pconf_text.replace(f"{repo_tag}\n", f"{repo_tag}\nSigLevel = Optional TrustAll\n")
+                        # Ensure custom repos like warpdotdev have SigLevel = Optional TrustAll
+                        pconf_text = re.sub(r'(\[warpdotdev[^\]]*\]\s*)(?!SigLevel)', r'\1SigLevel = Optional TrustAll\n', pconf_text)
                         with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_pconf:
                             tmp_pconf.write(pconf_text)
                             tmp_pconf_path = Path(tmp_pconf.name)
@@ -390,7 +390,7 @@ class EmergencyRestorer:
                             tmp_pconf_path.unlink()
                         if res != 'skipped':
                             print(f"  {GREEN}+ [{res.upper()}]{NC} /etc/pacman.conf (with SigLevel hardening)")
-                            subprocess.run(['sudo', 'pacman', '-Sy'], check=False)
+                            subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
                         continue
                     except Exception as e:
                         print(f"  ⚠️  Notice on pacman.conf: {e}")
@@ -424,9 +424,9 @@ class EmergencyRestorer:
             native_pkgs = [p['name'] for p in packages.get('arch_native', []) if 'name' in p]
             aur_pkgs = [p['name'] for p in packages.get('arch_aur', []) if 'name' in p]
 
-            # 1. Synchronize package databases first so any restored repos are known
+            # 1. Synchronize package databases first so any restored repos are known (non-interactive)
             print("  🔄 Synchronizing pacman package databases...")
-            subprocess.run(['sudo', 'pacman', '-Sy'], check=False)
+            subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
 
             # 2. Check native packages with pacman -T
             missing_native = []
