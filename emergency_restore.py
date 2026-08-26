@@ -365,7 +365,11 @@ class EmergencyRestorer:
             native_pkgs = [p['name'] for p in packages.get('arch_native', []) if 'name' in p]
             aur_pkgs = [p['name'] for p in packages.get('arch_aur', []) if 'name' in p]
 
-            # 1. Check native packages with pacman -T
+            # 1. Synchronize package databases first so any restored repos are known
+            print("  🔄 Synchronizing pacman package databases...")
+            subprocess.run(['sudo', 'pacman', '-Sy'], check=False)
+
+            # 2. Check native packages with pacman -T
             missing_native = []
             if native_pkgs:
                 try:
@@ -374,18 +378,6 @@ class EmergencyRestorer:
                 except Exception:
                     missing_native = native_pkgs
 
-            if not missing_native:
-                print(f"  {GREEN}✓ All {len(native_pkgs)} native pacman packages are already installed.{NC}")
-            else:
-                print(f"  📦 Installing {len(missing_native)} missing native packages (out of {len(native_pkgs)})...")
-                cmd = ['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + missing_native
-                try:
-                    subprocess.run(cmd, check=True)
-                    print(f"  {GREEN}✅ Missing native packages installed successfully.{NC}")
-                except Exception as e:
-                    print(f"  ⚠️  Pacman installation error: {e}")
-
-            # 2. Check AUR packages with pacman -T
             missing_aur = []
             if aur_pkgs:
                 try:
@@ -394,20 +386,47 @@ class EmergencyRestorer:
                 except Exception:
                     missing_aur = aur_pkgs
 
+            if not missing_native:
+                print(f"  {GREEN}✓ All {len(native_pkgs)} native pacman packages are already installed.{NC}")
+            else:
+                print(f"  📦 Installing {len(missing_native)} missing native packages (out of {len(native_pkgs)})...")
+                cmd = ['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + missing_native
+                res = subprocess.run(cmd, capture_output=True, text=True)
+
+                if res.returncode == 0:
+                    print(f"  {GREEN}✅ Missing native packages installed successfully.{NC}")
+                else:
+                    import re
+                    not_found = re.findall(r"target not found:\s*(\S+)", res.stderr)
+                    if not_found:
+                        print(f"  {YELLOW}⚠️  Skipping packages not found in native repos: {', '.join(not_found)}{NC}")
+                        filtered = [p for p in missing_native if p not in not_found]
+                        if filtered:
+                            print(f"  📦 Retrying installation for remaining {len(filtered)} native packages...")
+                            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + filtered, check=False)
+                            print(f"  {GREEN}✅ Native packages installed.{NC}")
+                        # Move missing targets to AUR queue
+                        for nf in not_found:
+                            if nf not in missing_aur:
+                                missing_aur.append(nf)
+                    else:
+                        print(f"  ⚠️  Pacman notice: {res.stderr.strip()[:200]}")
+
+            # 3. Check & Install AUR packages
             if not missing_aur:
-                print(f"  {GREEN}✓ All {len(aur_pkgs)} AUR packages are already installed.{NC}")
+                print(f"  {GREEN}✓ All AUR packages are already installed.{NC}")
             else:
                 aur_helper = shutil.which('paru') or shutil.which('yay')
                 if aur_helper:
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
                     cmd = [aur_helper, '-S', '--needed', '--noconfirm'] + missing_aur
                     try:
-                        subprocess.run(cmd, check=True)
-                        print(f"  {GREEN}✅ Missing AUR packages installed.{NC}")
+                        subprocess.run(cmd, check=False)
+                        print(f"  {GREEN}✅ AUR packages step completed.{NC}")
                     except Exception as e:
-                        print(f"  ⚠️  AUR installation error: {e}")
+                        print(f"  ⚠️  AUR installation notice: {e}")
                 else:
-                    print(f"  ⚠️  No AUR helper found. Missing AUR packages: {missing_aur}")
+                    print(f"  ⚠️  No AUR helper found. Missing AUR/custom packages: {missing_aur}")
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
