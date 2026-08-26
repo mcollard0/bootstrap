@@ -428,6 +428,9 @@ class EmergencyRestorer:
             print("  🔄 Synchronizing pacman package databases...")
             subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
 
+            # Ensure base-devel is installed for compiling AUR packages
+            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel'], check=False)
+
             # 2. Check native packages with pacman -T
             missing_native = []
             if native_pkgs:
@@ -450,7 +453,9 @@ class EmergencyRestorer:
             else:
                 print(f"  📦 Installing {len(missing_native)} missing native packages (out of {len(native_pkgs)})...")
                 cmd = ['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + missing_native
-                res = subprocess.run(cmd, capture_output=True, text=True)
+                # Stream default newlines to auto-select default provider alternatives if prompted
+                newlines = chr(10) * 100
+                res = subprocess.run(cmd, input=newlines, text=True, capture_output=True)
 
                 if res.returncode == 0:
                     print(f"  {GREEN}✅ Missing native packages installed successfully.{NC}")
@@ -462,7 +467,7 @@ class EmergencyRestorer:
                         filtered = [p for p in missing_native if p not in not_found]
                         if filtered:
                             print(f"  📦 Retrying installation for remaining {len(filtered)} native packages...")
-                            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + filtered, check=False)
+                            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + filtered, input=newlines, text=True, check=False)
                             print(f"  {GREEN}✅ Native packages installed.{NC}")
                         # Move missing targets to AUR queue
                         for nf in not_found:
@@ -490,9 +495,14 @@ class EmergencyRestorer:
 
                 if aur_helper:
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
-                    cmd = ['sudo', '-u', self.target_user, aur_helper, '-S', '--needed', '--noconfirm'] + missing_aur
+                    flags = ['--needed', '--noconfirm']
+                    if 'paru' in str(aur_helper):
+                        flags.append('--skipreview')
+                    cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + missing_aur
                     try:
-                        subprocess.run(cmd, check=False)
+                        # Auto-answer provider selection prompts with default choice (newline)
+                        aur_newlines = chr(10) * (len(missing_aur) * 5 + 100)
+                        subprocess.run(cmd, input=aur_newlines, text=True, check=False)
                         print(f"  {GREEN}✅ AUR packages step completed.{NC}")
                     except Exception as e:
                         print(f"  ⚠️  AUR installation notice: {e}")
