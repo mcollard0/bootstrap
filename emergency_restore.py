@@ -494,7 +494,7 @@ class EmergencyRestorer:
                         import re
                         pconf_text = src_f.read_text(encoding='utf-8')
                         # Ensure custom repos like warpdotdev have SigLevel = Optional TrustAll
-                        pconf_text = re.sub(r'(\[warpdotdev[^\]]*\]\s*)(?!SigLevel)', r'\1SigLevel = Optional TrustAll\n', pconf_text)
+                        pconf_text = re.sub(r'(\[warpdotdev[^\]]*\]\n)', r'\1SigLevel = Optional TrustAll\n', pconf_text)
                         with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_pconf:
                             tmp_pconf.write(pconf_text)
                             tmp_pconf_path = Path(tmp_pconf.name)
@@ -504,6 +504,8 @@ class EmergencyRestorer:
                             tmp_pconf_path.unlink()
                         if res != 'skipped':
                             print(f"  {GREEN}+ [{res.upper()}]{NC} /etc/pacman.conf (with SigLevel hardening)")
+                            subprocess.run(['pacman-key', '--recv-keys', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
+                            subprocess.run(['pacman-key', '--lsign-key', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
                             subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
                         continue
                     except Exception as e:
