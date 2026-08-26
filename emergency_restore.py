@@ -598,6 +598,9 @@ class EmergencyRestorer:
 
                     print(f"  {GREEN}✅ Resilient native installation completed: {successful} packages installed.{NC}")
 
+                    # Automatically clean pacman package cache to keep disk space free
+                    subprocess.run(['sudo', 'pacman', '-Sc', '--noconfirm'], check=False)
+
                     # Move missing targets to AUR queue
                     for nf in not_found:
                         if nf not in missing_aur:
