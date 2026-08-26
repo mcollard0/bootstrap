@@ -650,7 +650,7 @@ class EmergencyRestorer:
                 except Exception as e:
                     print(f"  ⚠️  APT error: {e}")
 
-    def run_interactive(self, skip_confirmation: bool = False, password: str = None):
+    def run_interactive(self, skip_confirmation: bool = False, password: str = None, scope: str = None):
         """Run interactive restoration workflow."""
         print_emergency_banner()
 
@@ -709,7 +709,11 @@ class EmergencyRestorer:
             print("  5. Install Missing Software Packages only")
             print("  q. Quit")
 
-            choice = input("\nEnter choice [1-5, default: 2]: ").strip() or "2"
+            if scope:
+                choice = str(scope).strip()
+                print(f"\nRestoration scope provided via CLI: {choice}")
+            else:
+                choice = input("\nEnter choice [1-5, default: 2]: ").strip() or "2"
 
             if choice == '1':
                 self.restore_fstab_and_mounts(stage_dir, apply_changes=True)
@@ -763,6 +767,7 @@ def main():
     parser.add_argument('--user', type=str, default=None, help="Target username (default: current user)")
     parser.add_argument('--password', '-p', type=str, default=None, help="Vault decryption password (or set BOOTSTRAP_SECRET env var)")
     parser.add_argument('--yes', '-y', action='store_true', help="Skip countdown confirmation prompt")
+    parser.add_argument('--scope', '-s', type=str, default=None, choices=['1', '2', '3', '4', '5'], help="Restoration scope (1: Full, 2: Configs/Keys, 3: Storage/fstab, 4: User Dotfiles, 5: Packages)")
     parser.add_argument('--list-backups', action='store_true', help="List local and archive backups")
 
     args = parser.parse_args()
@@ -810,7 +815,7 @@ def main():
             sys.exit(1)
 
     restorer = EmergencyRestorer(vault_path, target_user=args.user)
-    restorer.run_interactive(skip_confirmation=args.yes, password=args.password)
+    restorer.run_interactive(skip_confirmation=args.yes, password=args.password, scope=args.scope)
 
 
 if __name__ == '__main__':
