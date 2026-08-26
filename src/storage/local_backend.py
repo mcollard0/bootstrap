@@ -52,14 +52,19 @@ class LocalStorageBackend(BaseStorageBackend):
         if not self.dest_path.exists():
             return backups
 
-        for f in self.dest_path.glob('bootstrap_vault_*.tar.enc'):
-            if f.is_file():
-                backups.append({
-                    'name': f.name,
-                    'path': str(f),
-                    'size': f.stat().st_size,
-                    'mtime': f.stat().st_mtime
-                })
+        # Match .tar.zst.enc, .tar.gz.enc, and .tar.enc
+        patterns = ['bootstrap_vault_*.tar.zst.enc', 'bootstrap_vault_*.tar.gz.enc', 'bootstrap_vault_*.tar.enc']
+        seen = set()
+        for pat in patterns:
+            for f in self.dest_path.glob(pat):
+                if f.is_file() and f not in seen:
+                    seen.add(f)
+                    backups.append({
+                        'name': f.name,
+                        'path': str(f),
+                        'size': f.stat().st_size,
+                        'mtime': f.stat().st_mtime
+                    })
 
         # Sort newest first
         backups.sort(key=lambda x: x['mtime'], reverse=True)

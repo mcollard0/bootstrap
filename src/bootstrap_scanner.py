@@ -36,7 +36,8 @@ from scanners import (
     SystemdScanner,
     NetworkScanner,
     KeysScanner,
-    DesktopScanner
+    DesktopScanner,
+    CustomFilesScanner
 )
 from storage import StorageDispatcher
 
@@ -66,6 +67,7 @@ class UniversalSystemScanner:
         net_scanner = NetworkScanner(self.system_info)
         keys_scanner = KeysScanner(self.system_info)
         desktop_scanner = DesktopScanner(self.system_info)
+        custom_scanner = CustomFilesScanner(self.system_info)
 
         print("  📦 Scanning software packages...")
         packages = pkg_scanner.scan()
@@ -88,6 +90,9 @@ class UniversalSystemScanner:
         print("  🖥️  Scanning desktop environment and shortcuts...")
         desktop = desktop_scanner.scan()
 
+        print("  🎨 Scanning custom & one-off files (config/custom_files.json)...")
+        custom_files = custom_scanner.scan()
+
         inventory = {
             'version': '3.0',
             'timestamp': datetime.datetime.now().isoformat(),
@@ -98,7 +103,8 @@ class UniversalSystemScanner:
             'systemd': systemd,
             'network': network,
             'keys': keys,
-            'desktop': desktop
+            'desktop': desktop,
+            'custom_files': custom_files
         }
 
         return inventory
@@ -113,7 +119,8 @@ class UniversalSystemScanner:
             SystemdScanner(self.system_info),
             NetworkScanner(self.system_info),
             KeysScanner(self.system_info),
-            DesktopScanner(self.system_info)
+            DesktopScanner(self.system_info),
+            CustomFilesScanner(self.system_info)
         ]
 
         for s in scanners:
@@ -229,20 +236,6 @@ class UniversalSystemScanner:
                 'sha256': hashlib.sha256(inv_bytes).hexdigest(),
                 'sha1': hashlib.sha1(inv_bytes).hexdigest()
             })
-
-            # Copy existing encrypted_secrets.json if present
-            existing_secrets = self.data_dir / 'encrypted_secrets.json'
-            if existing_secrets.exists():
-                shutil.copy2(existing_secrets, stage_path / 'encrypted_secrets.json')
-                sec_bytes = existing_secrets.read_bytes()
-                staged_manifest_entries.append({
-                    'virtual_path': 'encrypted_secrets.json',
-                    'source_path': str(existing_secrets),
-                    'size_bytes': len(sec_bytes),
-                    'mode': '0600',
-                    'sha256': hashlib.sha256(sec_bytes).hexdigest(),
-                    'sha1': hashlib.sha1(sec_bytes).hexdigest()
-                })
 
             # Generate manifest.json & manifest.txt and save to staging
             manifest_json, manifest_txt = self._generate_manifest(staged_manifest_entries, hostname)

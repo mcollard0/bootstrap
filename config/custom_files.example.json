@@ -1,0 +1,17 @@
+[
+  {
+    "name": "0xProto Fonts",
+    "description": "0xProto and 0xProto Nerd Font TTF typography in system fonts directory",
+    "patterns": [
+      "/usr/local/share/fonts/0/0xProto*.ttf"
+    ]
+  },
+  {
+    "name": "Custom Application Config",
+    "description": "Example user one-off dotfile or application settings",
+    "patterns": [
+      "~/.sqliterc",
+      "~/.config/myapp/custom_settings.conf"
+    ]
+  }
+]

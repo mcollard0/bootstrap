@@ -1,0 +1,16 @@
+[
+  {
+    "name": "0xProto Fonts",
+    "description": "0xProto and 0xProto Nerd Font TTF typography in system fonts directory",
+    "patterns": [
+      "/usr/local/share/fonts/0/0xProto*.ttf"
+    ]
+  },
+  {
+    "name": "SQLite Runtime Config",
+    "description": "User custom SQLite initialization file",
+    "patterns": [
+      "~/.sqliterc"
+    ]
+  }
+]

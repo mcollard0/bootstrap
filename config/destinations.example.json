@@ -2,8 +2,8 @@
   "local_project_backup": {
     "type": "local",
     "enabled": true,
-    "destination_dir": "./backup",
-    "retention_count": 25
+    "destination_dir": "./data",
+    "retention_count": 5
   },
   "local_fast_archive": {
     "type": "local",

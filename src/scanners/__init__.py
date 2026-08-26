@@ -10,6 +10,7 @@ from .systemd_scanner import SystemdScanner
 from .network_scanner import NetworkScanner
 from .keys_scanner import KeysScanner
 from .desktop_scanner import DesktopScanner
+from .custom_files_scanner import CustomFilesScanner
 
 __all__ = [
     'BaseScanner',
@@ -19,5 +20,6 @@ __all__ = [
     'SystemdScanner',
     'NetworkScanner',
     'KeysScanner',
-    'DesktopScanner'
+    'DesktopScanner',
+    'CustomFilesScanner'
 ]
