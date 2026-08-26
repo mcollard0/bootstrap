@@ -95,3 +95,17 @@ In Linux shells (Bash, Zsh, Fish), certain characters are interpreted as syntact
   - **Use Scope 2 (`Restore Configurations & Keys only`) in Live/Emergency Environments**: Scope 2 restores storage mounts, fstab, shells, SSH/GPG keys, desktop configs, fonts, and tunnels in under 5 seconds with zero risk of disk exhaustion.
   - **Scope 1 (Full Package Restoration)** should only be performed on an installed OS with a physical NVMe/SSD drive mounted at `/`.
 
+---
+
+## 8. Default Shell & Desktop Shortcut (Ctrl+Alt+T) Synchronization
+
+- **The Danger**:
+  - Restoring shell configuration directories (e.g. `~/.config/fish/`) does not automatically change the user's default login shell in `/etc/passwd`. Freshly created users or rescue accounts default to `/bin/bash`, resulting in a mismatch where the user's shell prompt and functions are not loaded upon login.
+  - In desktop environments like KDE Plasma 6, shortcuts and default applications are split across `~/.config/kdeglobals` (`TerminalApplication`) and `~/.config/kglobalshortcutsrc` (`[services][<app>.desktop] _launch=Ctrl+Alt+T`).
+  - Restoring these config files on disk while KDE is active does not notify the in-memory daemon (`kglobalaccel`). Without an explicit DBus reload signal, Plasma continues using old shortcut mappings until logout.
+- **The Solution**:
+  - **Automated Shell Synchronization**: `emergency_restore.py` checks `inventory.json`'s `shells.current` (e.g. `/bin/fish`), ensures it exists in `/etc/shells`, and invokes `usermod -s <shell> <user>`.
+  - **Live Shortcut Reloading**: After restoring dotfiles, `emergency_restore.py` sends `org.kde.KGlobalAccel.reloadConfig` over the user session DBus (`/run/user/<uid>/bus`) so hotkeys take effect immediately.
+  - **Dedicated Switcher Utilities**: Added [`scripts/set_default_shell.sh`](file:///run/media/michael/FAST_ARCHIVE/Programming/bootstrap/scripts/set_default_shell.sh) and [`scripts/set_default_terminal.sh`](file:///run/media/michael/FAST_ARCHIVE/Programming/bootstrap/scripts/set_default_terminal.sh) to quickly switch and verify preferred shells and terminals (`warp`, `alacritty`, `konsole`, `kitty`).
+
+

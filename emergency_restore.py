@@ -703,6 +703,57 @@ class EmergencyRestorer:
                 except Exception as e:
                     print(f"  ⚠️  APT error: {e}")
 
+    def restore_shell_and_desktop_preferences(self, inventory: Dict[str, Any]):
+        """Restore the user's default login shell and notify desktop of shortcut reload."""
+        print(f"\n🐚 Restoring User Shell & Desktop Preferences...")
+
+        # 1. Shell restoration
+        shell_info = inventory.get('shells', {})
+        target_shell_bin = shell_info.get('current') or shell_info.get('default_name')
+        if target_shell_bin:
+            resolved_shell = (
+                shutil.which(target_shell_bin) or 
+                shutil.which(Path(target_shell_bin).name) or 
+                (f"/usr/bin/{target_shell_bin}" if Path(f"/usr/bin/{target_shell_bin}").exists() else None)
+            )
+            if resolved_shell:
+                try:
+                    # Ensure in /etc/shells
+                    etc_shells = Path('/etc/shells').read_text(encoding='utf-8') if Path('/etc/shells').exists() else ""
+                    if resolved_shell not in etc_shells:
+                        with open('/etc/shells', 'a', encoding='utf-8') as f:
+                            f.write(f"\n{resolved_shell}\n")
+
+                    # Check current shell
+                    import pwd
+                    current_shell = pwd.getpwnam(self.target_user).pw_shell
+                    if current_shell != resolved_shell:
+                        subprocess.run(['usermod', '-s', resolved_shell, self.target_user], check=False)
+                        print(f"  {GREEN}✓{NC} Default login shell set to {resolved_shell} for {self.target_user}.")
+                    else:
+                        print(f"  {GREEN}✓{NC} Default login shell is already {resolved_shell}.")
+                except Exception as e:
+                    print(f"  ⚠️  Shell restoration note: {e}")
+            else:
+                print(f"  ⚠️  Target shell '{target_shell_bin}' not yet found on system.")
+
+        # 2. KDE Plasma Global Accel reload
+        try:
+            import pwd
+            uid = pwd.getpwnam(self.target_user).pw_uid
+            bus_path = f"/run/user/{uid}/bus"
+            qdbus = shutil.which('qdbus6') or shutil.which('qdbus')
+            if qdbus and Path(bus_path).exists():
+                env = os.environ.copy()
+                env['DBUS_SESSION_BUS_ADDRESS'] = f"unix:path={bus_path}"
+                subprocess.run(
+                    ['sudo', '-u', self.target_user, qdbus, 'org.kde.KGlobalAccel', '/kglobalaccel', 'org.kde.KGlobalAccel.reloadConfig'],
+                    env=env, check=False, capture_output=True
+                )
+                print(f"  {GREEN}✓{NC} KDE Plasma global shortcuts reloaded live.")
+        except Exception:
+            pass
+
     def run_interactive(self, skip_confirmation: bool = False, password: str = None, scope: str = None):
         """Run interactive restoration workflow."""
         print_emergency_banner()
@@ -773,16 +824,20 @@ class EmergencyRestorer:
                 self.restore_user_files(stage_dir)
                 self.restore_system_files(stage_dir)
                 self.install_packages(inventory)
+                self.restore_shell_and_desktop_preferences(inventory)
             elif choice == '2':
                 self.restore_fstab_and_mounts(stage_dir, apply_changes=True)
                 self.restore_user_files(stage_dir)
                 self.restore_system_files(stage_dir)
+                self.restore_shell_and_desktop_preferences(inventory)
             elif choice == '3':
                 self.restore_fstab_and_mounts(stage_dir, apply_changes=True)
             elif choice == '4':
                 self.restore_user_files(stage_dir)
+                self.restore_shell_and_desktop_preferences(inventory)
             elif choice == '5':
                 self.install_packages(inventory)
+                self.restore_shell_and_desktop_preferences(inventory)
             elif choice.lower() == 'q':
                 print("Restoration cancelled.")
                 return
