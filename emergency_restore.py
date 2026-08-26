@@ -443,8 +443,8 @@ class EmergencyRestorer:
             print("  🔄 Synchronizing pacman package databases...")
             subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
 
-            # Ensure base-devel is installed for compiling AUR packages
-            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel'], check=False)
+            # Ensure base-devel and default Java runtime are installed so AUR compiles and packages like openwebstart-bin do not trigger 28-provider selection prompts
+            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel', 'jre17-openjdk'], check=False)
 
             # 2. Check native packages with pacman -T
             missing_native = []
@@ -512,7 +512,7 @@ class EmergencyRestorer:
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
                     flags = ['--needed', '--noconfirm']
                     if 'paru' in str(aur_helper):
-                        flags.append('--skipreview')
+                        flags.extend(['--skipreview', '--noprovides'])
                     cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + missing_aur
                     try:
                         res = subprocess.run(cmd, input=aur_newlines, text=True)
