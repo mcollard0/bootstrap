@@ -223,14 +223,26 @@ class EmergencyRestorer:
                 if mp.startswith('/run/media/') or mp.startswith('/mnt/') or mp.startswith('/media/'):
                     mount_dirs_to_create.append(mp)
                 if mp not in existing_mounts:
-                    lines_to_add.append(line)
+                    # Automatically harden secondary archive mounts with non-blocking, nofail, and automount options
+                    if len(parts) >= 4 and (mp.startswith('/run/media/') or mp.startswith('/mnt/') or mp.startswith('/media/')):
+                        dev, mount_point, fstype, opts = parts[0], parts[1], parts[2], parts[3]
+                        opts_list = [o.strip() for o in opts.split(',')]
+                        for safe_opt in ['nofail', 'x-systemd.device-timeout=5s', 'x-systemd.automount']:
+                            opt_prefix = safe_opt.split('=')[0]
+                            if not any(o.startswith(opt_prefix) for o in opts_list):
+                                opts_list.append(safe_opt)
+                        new_opts = ','.join(opts_list)
+                        hardened_line = f"{dev:<45} {mount_point:<35} {fstype:<10} {new_opts:<65} 0 0"
+                        lines_to_add.append(hardened_line)
+                    else:
+                        lines_to_add.append(line)
 
         print(f"  • External archive mount points in vault: {len(mount_dirs_to_create)}")
         for mp in mount_dirs_to_create:
             exists = os.path.exists(mp)
             print(f"     • {mp} ({GREEN}exists{NC}" if exists else f"     • {mp} ({YELLOW}missing - will create{NC})")
 
-        print(f"  • Entries missing from /etc/fstab: {len(lines_to_add)}")
+        print(f"  • Entries to merge into /etc/fstab (Hardened with nofail & automount): {len(lines_to_add)}")
         for l in lines_to_add:
             print(f"     + {l}")
 

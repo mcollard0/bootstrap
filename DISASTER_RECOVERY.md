@@ -60,7 +60,15 @@ When prompted:
 
 ---
 
-## 💾 Step 4: Re-Attaching Archive Drives (`FAST_ARCHIVE`, `LARGE_ARCHIVE`)
+## 💾 Step 4: Re-Attaching Archive Drives (`FAST_ARCHIVE`, `LARGE_ARCHIVE`, etc.)
+
+### 🛡️ Non-Blocking Fail-Safe Mounts (`nofail`, `device-timeout`, `automount`)
+If your archive drives or secondary NVMe/SATA media were **also destroyed or missing**, the restorer prevents boot failure by automatically hardening all merged secondary mount entries:
+
+- **`nofail`**: Systemd will **not** abort boot or drop into the emergency maintenance shell if the drive is missing or damaged.
+- **`x-systemd.device-timeout=5s`**: Caps hardware probing wait time to 5 seconds instead of systemd's default 90–120 second hang.
+- **`x-systemd.automount`**: Eliminates boot-time blocking entirely by mounting on-demand only when a user or process actually accesses the directory.
+- **`0 0`**: Prevents `fsck` from attempting to check non-existent disk partitions during startup.
 
 The restorer will:
 1. Ensure all mount point directories exist in `/run/media/michael/`:
@@ -75,6 +83,16 @@ The restorer will:
 2. Verify `/etc/fstab` matches your drive UUIDs.
 3. Test mount without wiping data:
    ```bash
+   sudo mount -a
+   ```
+4. **Replacing a Destroyed Drive**: If you replace a dead drive with a new SSD/HDD:
+   ```bash
+   # Format new drive (e.g. Btrfs or Ext4)
+   sudo mkfs.btrfs -L FAST_ARCHIVE /dev/nvmeXn1pY
+   # Query the new UUID
+   sudo blkid /dev/nvmeXn1pY
+   # Update the UUID in /etc/fstab and reload systemd
+   sudo systemctl daemon-reload
    sudo mount -a
    ```
 
