@@ -2,58 +2,43 @@
 """
 Shell & Environment Scanner
 
-Scans configuration files and environments for:
-- Fish shell (`~/.config/fish/config.fish`, `fish_variables`, `conf.d/`, `functions/`)
-- System-wide Fish configuration (`/etc/fish/config.fish`, `/etc/fish/conf.d/*.fish`)
+Inventories shell configurations for encrypted vault backup:
+- Fish shell (`~/.config/fish/config.fish`, `fish_variables`, `conf.d/`, `functions/`, `completions/`)
+- System-wide Fish configuration (`/etc/fish/config.fish`, `/etc/fish/conf.d/*.fish`, `/etc/shells`)
 - Bash shell (`~/.bashrc`, `~/.bash_profile`, `~/.bash_aliases`, `~/.profile`)
-- MOTD & system greetings (`/etc/motd`, `/etc/issue`, `/etc/environment`, `/etc/shells`)
-- Prompt configuration (`~/.config/starship.toml`)
-- Detects sensitive environment variables (API keys, credentials, URIs)
+- MOTD & system greetings (`/etc/motd`, `/etc/issue`, `/etc/environment`)
+- Prompts & fetch tools (`~/.config/starship.toml`, `~/.config/fastfetch/`)
+
+All configuration files are collected as complete files and sealed directly inside
+the encrypted vault (.tar.zst.enc). No file content parsing or regex extraction is performed.
 """
 
 import os
-import re
 from pathlib import Path
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any
 from .base_scanner import BaseScanner
 
 
 class ShellScanner(BaseScanner):
-    """Scans multi-shell configurations, functions, aliases, and prompts."""
-
-    SENSITIVE_PATTERNS = [
-        (r'(mongodb(\+srv)?://[^@\s]+:[^@\s]+@[^\s]+)', 'MongoDB URI'),
-        (r'(sk-[A-Za-z0-9\-_]{20,})', 'API Key (sk- format)'),
-        (r'(xai-[A-Za-z0-9\-_]{20,})', 'XAI API Key'),
-        (r'(ghp_[A-Za-z0-9]{30,})', 'GitHub Token'),
-        (r'(AKIA[0-9A-Z]{16})', 'AWS Access Key'),
-        (r'([A-Za-z0-9\-_]{40,})', 'Generic Long Token'),
-        (r'(gmail.*password.*=\s*["\']?([^"\'\s]+))', 'Gmail Password'),
-        (r'(api.*key.*=\s*["\']?([^"\'\s]+))', 'API Key Assignment')
-    ]
+    """Inventories shell configuration files for encrypted vault packaging."""
 
     def scan(self) -> Dict[str, Any]:
-        fish_data, fish_secrets = self._scan_fish()
+        fish_data = self._scan_fish()
         system_fish_data = self._scan_system_fish()
-        bash_data, bash_secrets = self._scan_bash()
+        bash_data = self._scan_bash()
         motd_data = self._scan_motd()
         prompt_data = self._scan_prompts()
-
-        all_secrets = {}
-        all_secrets.update(fish_secrets)
-        all_secrets.update(bash_secrets)
 
         return {
             'fish': fish_data,
             'system_fish': system_fish_data,
             'bash': bash_data,
             'motd': motd_data,
-            'prompts': prompt_data,
-            'detected_secrets': all_secrets
+            'prompts': prompt_data
         }
 
-    def _scan_fish(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Scan user fish configuration files and variables."""
+    def _scan_fish(self) -> Dict[str, Any]:
+        """Inventory user fish configuration files and variables."""
         fish_dir = self.user_home / '.config/fish'
         info = {
             'exists': fish_dir.exists(),
@@ -63,39 +48,29 @@ class ShellScanner(BaseScanner):
             'functions': [],
             'completions': []
         }
-        secrets = {}
 
         if not fish_dir.exists():
-            return info, secrets
+            return info
 
-        # conf.d files
         conf_d = fish_dir / 'conf.d'
         if conf_d.exists():
             for f in conf_d.glob('*.fish'):
                 info['conf_d_files'].append(f.name)
-                self._check_file_secrets(f, secrets, prefix='fish_conf_d')
 
-        # functions
         funcs_dir = fish_dir / 'functions'
         if funcs_dir.exists():
             for f in funcs_dir.glob('*.fish'):
                 info['functions'].append(f.name)
 
-        # completions
         comp_dir = fish_dir / 'completions'
         if comp_dir.exists():
             for f in comp_dir.glob('*.fish'):
                 info['completions'].append(f.name)
 
-        # scan config.fish for secrets
-        config_fish = fish_dir / 'config.fish'
-        if config_fish.exists():
-            self._check_file_secrets(config_fish, secrets, prefix='fish_config')
-
-        return info, secrets
+        return info
 
     def _scan_system_fish(self) -> Dict[str, Any]:
-        """Scan system-wide fish configuration in /etc/fish."""
+        """Inventory system-wide fish configuration in /etc/fish."""
         etc_fish = Path('/etc/fish')
         info = {
             'exists': etc_fish.exists(),
@@ -109,42 +84,31 @@ class ShellScanner(BaseScanner):
                     info['conf_d_files'].append(f.name)
         return info
 
-    def _scan_bash(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Scan bash configuration files."""
+    def _scan_bash(self) -> Dict[str, Any]:
+        """Inventory bash configuration files."""
         bash_files = ['.bashrc', '.bash_profile', '.bash_aliases', '.profile']
         found_files = []
-        secrets = {}
-
         for bf in bash_files:
             p = self.user_home / bf
             if p.exists():
                 found_files.append(bf)
-                self._check_file_secrets(p, secrets, prefix=f'bash_{bf}')
-
-        return {'found_files': found_files}, secrets
+        return {'found_files': found_files}
 
     def _scan_motd(self) -> Dict[str, Any]:
-        """Scan message of the day, login banners, and shell registry."""
+        """Inventory message of the day, login banners, and shell registry."""
         motd_paths = ['/etc/motd', '/etc/issue', '/etc/issue.net', '/etc/environment', '/etc/shells']
         motd_info = {}
-
         for mp in motd_paths:
             p = Path(mp)
             if p.exists() and p.is_file():
-                try:
-                    content = p.read_text(encoding='utf-8', errors='ignore').strip()
-                    motd_info[mp] = {
-                        'exists': True,
-                        'size': p.stat().st_size,
-                        'preview': content[:200]
-                    }
-                except Exception:
-                    motd_info[mp] = {'exists': True, 'readable': False}
-
+                motd_info[mp] = {
+                    'exists': True,
+                    'size': p.stat().st_size
+                }
         return motd_info
 
     def _scan_prompts(self) -> Dict[str, Any]:
-        """Scan Starship, Oh-My-Posh or other prompt configurations."""
+        """Inventory Starship or Fastfetch configurations."""
         prompts = {}
         starship = self.user_home / '.config/starship.toml'
         if starship.exists():
@@ -155,35 +119,6 @@ class ShellScanner(BaseScanner):
             prompts['fastfetch'] = str(fastfetch)
 
         return prompts
-
-    def _check_file_secrets(self, file_path: Path, secrets_dict: Dict[str, Any], prefix: str = ""):
-        """Helper to scan a file for API keys and secrets."""
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                for line_num, line in enumerate(f, 1):
-                    line_clean = line.strip()
-                    if not line_clean or line_clean.startswith('#'):
-                        continue
-
-                    for pattern, desc in self.SENSITIVE_PATTERNS:
-                        match = re.search(pattern, line_clean, re.IGNORECASE)
-                        if match:
-                            raw_val = match.group(0)
-                            # Mask sensitive string (e.g. sk-ant...XYZ)
-                            if len(raw_val) > 10:
-                                masked = raw_val[:6] + "..." + raw_val[-4:]
-                            else:
-                                masked = "***REDACTED***"
-
-                            var_key = f"{prefix}_{file_path.stem}_L{line_num}"
-                            secrets_dict[var_key] = {
-                                'file': str(file_path),
-                                'line_num': line_num,
-                                'description': desc,
-                                'preview': masked
-                            }
-        except Exception:
-            pass
 
     def get_collectible_files(self) -> Dict[str, Path]:
         """Return dict of virtual path -> real path for vault backup."""
