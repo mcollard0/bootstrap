@@ -204,7 +204,18 @@ class EmergencyRestorer:
                 os.chmod(dest_file, mode)
             except Exception:
                 pass
-        self._set_user_ownership(dest_file)
+        
+        # Only set non-root user ownership if destination is inside user's home directory
+        try:
+            if str(dest_file).startswith(str(self.user_home)):
+                self._set_user_ownership(dest_file)
+            else:
+                os.chown(dest_file, 0, 0)
+                if not mode:
+                    os.chmod(dest_file, 0o644)
+        except Exception:
+            pass
+
         return status
 
     def _set_user_ownership(self, path: Path):
@@ -374,7 +385,7 @@ class EmergencyRestorer:
                             tmp_pconf.write(pconf_text)
                             tmp_pconf_path = Path(tmp_pconf.name)
                         try:
-                            res = self._safe_copy_file(tmp_pconf_path, dest_f)
+                            res = self._safe_copy_file(tmp_pconf_path, dest_f, mode=0o644)
                         finally:
                             tmp_pconf_path.unlink()
                         if res != 'skipped':
