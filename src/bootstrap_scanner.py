@@ -297,7 +297,24 @@ class UniversalSystemScanner:
         print(f"   SSH items catalogued:     {len(inventory['keys']['ssh_keys'])}")
 
         if encrypt_and_dispatch:
-            password = custom_password or prompt_for_password("system vault encryption")
+            env_password = os.environ.get('BOOTSTRAP_PASSWORD') or os.environ.get('VAULT_PASSWORD')
+            if not custom_password and not env_password:
+                vault_env = Path.home() / '.config' / 'bootstrap' / 'vault.env'
+                if vault_env.exists():
+                    try:
+                        for line in vault_env.read_text(encoding='utf-8').splitlines():
+                            line = line.strip()
+                            if line.startswith('BOOTSTRAP_PASSWORD='):
+                                val = line.split('=', 1)[1].strip(' "\'')
+                                if val:
+                                    env_password = val
+                                    break
+                    except Exception:
+                        pass
+
+            password = custom_password or env_password or prompt_for_password("system vault encryption")
+            pw_fingerprint = hashlib.sha256(password.encode('utf-8')).hexdigest()[:8]
+            print(f"🔒 Master Password Verified (Fingerprint: sha256:{pw_fingerprint})")
             vault_path = self.create_encrypted_vault(inventory, password)
 
             # Dispatch to storage backends

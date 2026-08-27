@@ -967,8 +967,24 @@ class EmergencyRestorer:
         meta = None
 
         for attempt in range(1, max_attempts + 1):
-            current_password = password or prompt_for_password("vault decryption")
-            print("\n🔓 Authenticating and decrypting vault...")
+            env_password = os.environ.get('BOOTSTRAP_PASSWORD') or os.environ.get('VAULT_PASSWORD')
+            if not password and not env_password:
+                vault_env = Path.home() / '.config' / 'bootstrap' / 'vault.env'
+                if vault_env.exists():
+                    try:
+                        for line in vault_env.read_text(encoding='utf-8').splitlines():
+                            line = line.strip()
+                            if line.startswith('BOOTSTRAP_PASSWORD='):
+                                val = line.split('=', 1)[1].strip(' "\'')
+                                if val:
+                                    env_password = val
+                                    break
+                    except Exception:
+                        pass
+
+            current_password = password or env_password or prompt_for_password("vault decryption")
+            pw_fingerprint = hashlib.sha256(current_password.encode('utf-8')).hexdigest()[:8]
+            print(f"\n🔓 Authenticating and decrypting vault (Password Fingerprint: sha256:{pw_fingerprint})...")
             try:
                 meta, stage_dir = self.inspect_vault(current_password)
                 print(f"{GREEN}✅ Authentication verified! Vault metadata:{NC}")

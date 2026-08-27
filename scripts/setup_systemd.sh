@@ -109,6 +109,7 @@ main() {
     local schedule_calendar="Mon *-*-* 03:00:00" # Default: Every Monday at 3:00 AM
     local schedule_desc="Weekly on Monday at 3:00 AM"
     local schedule_explicitly_set=false
+    local force_replace=false
 
     # Argument handling
     while [[ $# -gt 0 ]]; do
@@ -120,6 +121,10 @@ main() {
             --uninstall|-u)
                 uninstall_timer
                 exit 0
+                ;;
+            --force|-f)
+                force_replace=true
+                shift
                 ;;
             --secret|--password|-p)
                 custom_secret="$2"
@@ -148,6 +153,7 @@ main() {
                 echo
                 echo "Options:"
                 echo "  --secret, --password <PWD>  Pass SECRET non-interactively"
+                echo "  --force, -f                 Force overwrite existing timer and service without prompt"
                 echo "  --daily                     Schedule daily at 3:00 AM"
                 echo "  --weekly                    Schedule weekly on Monday at 3:00 AM (default)"
                 echo "  --schedule '<EXPR>'         Custom systemd OnCalendar expression"
@@ -175,11 +181,15 @@ main() {
 
     # Check if timer is already installed
     if [[ -f "$TIMER_FILE" || -f "$SERVICE_FILE" ]]; then
-        log_warning "An existing bootstrap systemd timer or service was detected."
-        read -p "Do you want to reconfigure and replace it? [Y/n]: " -r reply
-        if [[ "$reply" =~ ^[Nn]$ ]]; then
-            log_info "Setup cancelled. Existing units left intact."
-            exit 0
+        if [[ "$force_replace" == true ]]; then
+            log_info "Existing bootstrap systemd timer or service detected. Overwriting (--force specified)."
+        else
+            log_warning "An existing bootstrap systemd timer or service was detected."
+            read -p "Do you want to reconfigure and replace it? [Y/n]: " -r reply
+            if [[ "$reply" =~ ^[Nn]$ ]]; then
+                log_info "Setup cancelled. Existing units left intact."
+                exit 0
+            fi
         fi
     fi
 
@@ -188,6 +198,19 @@ main() {
     if [[ -z "$secret" ]]; then
         secret=$(prompt_secret)
     fi
+
+    # Write secret to secure user credentials file
+    local vault_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/bootstrap"
+    local vault_env_file="$vault_env_dir/vault.env"
+    mkdir -p "$vault_env_dir"
+    chmod 0700 "$vault_env_dir"
+    cat > "$vault_env_file" <<EOF
+# Universal Linux Bootstrap Master Encryption Password
+# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+BOOTSTRAP_PASSWORD="$secret"
+EOF
+    chmod 0600 "$vault_env_file"
+    log_success "Master password stored securely in $vault_env_file (mode 0600)."
 
     # Select schedule if interactive and not explicitly specified via flags
     if [[ "$schedule_explicitly_set" == false && -t 0 ]]; then
@@ -220,12 +243,6 @@ main() {
     # Ensure systemd user directory exists
     mkdir -p "$USER_SYSTEMD_DIR"
 
-    # Escape quotes and backslashes for systemd ExecStart
-    # In systemd ExecStart, arguments containing spaces or special chars are wrapped in double quotes
-    local escaped_secret="${secret//\\/\\\\}"
-    escaped_secret="${escaped_secret//\"/\\\"}"
-    escaped_secret="${escaped_secret//\$/\$\$}"
-
     # 1. Write the user service file
     log_info "Writing systemd service unit: $SERVICE_FILE..."
     cat > "$SERVICE_FILE" <<EOF
@@ -237,7 +254,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=$PROJECT_ROOT
-ExecStart=/bin/bash $RUN_BACKUP_SCRIPT --password "$escaped_secret"
+EnvironmentFile=-%h/.config/bootstrap/vault.env
+ExecStart=/bin/bash $RUN_BACKUP_SCRIPT
 StandardOutput=journal
 StandardError=journal
 ProtectSystem=full
@@ -250,7 +268,7 @@ PrivateTmp=true
 WantedBy=default.target
 EOF
 
-    # Restrict permissions to 0600 so only the user can read the SECRET
+    # Restrict permissions to 0600 so only the user can read
     chmod 0600 "$SERVICE_FILE"
     log_success "Service unit created with secure 0600 permissions."
 

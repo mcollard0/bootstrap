@@ -18,6 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+VAULT_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/bootstrap/vault.env"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -35,6 +36,14 @@ main() {
     log_info "🚀 Starting Master Bootstrap Backup & Vault Dispatch"
     log_info "====================================================="
     cd "$PROJECT_ROOT"
+
+    # Source vault.env if available and BOOTSTRAP_PASSWORD is not already set
+    if [[ -z "${BOOTSTRAP_PASSWORD:-}" && -f "$VAULT_ENV" ]]; then
+        log_info "🔑 Sourcing master password credentials from $VAULT_ENV"
+        set +u
+        source "$VAULT_ENV"
+        set -u
+    fi
 
     # 1. Run Universal Scanner & Vault Packaging
     log_info "🔍 Scanning system and creating encrypted vault..."
