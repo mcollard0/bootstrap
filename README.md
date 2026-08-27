@@ -34,7 +34,7 @@ The Universal Bootstrap System is a comprehensive disaster recovery and configur
   - **Google Drive** & **Microsoft OneDrive** (via rclone with pre-flight checks).
   - **Email (SMTP)** (Automated multi-part chunking for attachments > 20 MB).
   - **Local & Archive Drives** (`/run/media/michael/FAST_ARCHIVE/SystemBackups/` and `./data/`).
-- **Zero-Dependency Rescue Decryptor (`emergency_restore.py`)**: Standalone interactive Python restoration tool runnable directly from an Arch or Ubuntu Live USB.
+- **Zero-Dependency Rescue Decryptor (`restore.sh` / `src/emergency_restore.py`)**: Standalone restoration tool that automatically checks and provisions Python 3, cryptography, zstd, tar, and curl across any Linux distribution before decrypting and restoring system state.
 
 ---
 
@@ -141,7 +141,8 @@ Add arbitrary files, fonts, or scripts to back up:
 ### 5. Disaster Recovery (Fresh System or Replaced `/` Drive)
 ```bash
 # Step 1: Unpack vault and restore fstab, fish/bash dotfiles, GPG/SSH keys, and configs
-sudo python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
+# (restore.sh automatically installs Python 3, cryptography, zstd, and tar if missing)
+sudo ./restore.sh --vault data/bootstrap_vault_*.tar.zst.enc
 
 # Step 2: Reinstall missing software packages in batch (skips packages already present)
 sudo ./scripts/bootstrap.sh

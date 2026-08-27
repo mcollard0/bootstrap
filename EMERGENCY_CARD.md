@@ -60,7 +60,8 @@ Choose whichever source is most accessible:
 
 Run the interactive emergency restoration tool as **`sudo`** from the repository root:
 ```bash
-sudo python3 emergency_restore.py --vault data/bootstrap_vault_*.tar.zst.enc
+# restore.sh automatically verifies and installs Python 3, cryptography, and zstd if missing
+sudo ./restore.sh --vault data/bootstrap_vault_*.tar.zst.enc
 ```
 *(Running with `sudo` is required to safely merge into `/etc/fstab`, create `/run/media/` mount points, and restore system fonts and hardware rules. The tool automatically detects your regular user via `$SUDO_USER` and sets proper user ownership for all home directory dotfiles and keys.)*
 1. Review the emergency banner and press **`Y`** (or Enter) at the 900-second countdown confirmation.

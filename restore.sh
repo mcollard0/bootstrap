@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Universal Linux Bootstrap - Emergency Disaster Recovery Launcher
+#
+# Idempotently checks, installs, and provisions runtime prerequisites
+# (Python 3, cryptography, zstd, tar, curl) across any Linux distribution
+# before delegating to the primary recovery engine (src/emergency_restore.py).
+#
+# Usage:
+#   sudo ./restore.sh [options]
+#   sudo ./restore.sh -s 1 -y
+#   sudo ./restore.sh -s 2 --password "<PASSWORD>"
+# ==============================================================================
+
+set -eo pipefail
+
+# ANSI Colors
+if [ -t 1 ]; then
+    BOLD="\033[1m"
+    GREEN="\033[0;32m"
+    YELLOW="\033[1;33m"
+    CYAN="\033[0;36m"
+    RED="\033[0;31m"
+    NC="\033[0m"
+else
+    BOLD=""
+    GREEN=""
+    YELLOW=""
+    CYAN=""
+    RED=""
+    NC=""
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESTORE_PY="$SCRIPT_DIR/src/emergency_restore.py"
+
+if [ ! -f "$RESTORE_PY" ]; then
+    echo -e "${RED}Error: Recovery engine not found at $RESTORE_PY${NC}" >&2
+    exit 1
+fi
+
+echo -e "${BOLD}${CYAN}======================================================================${NC}"
+echo -e "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
+echo -e "${BOLD}${CYAN}======================================================================${NC}"
+
+# 1. Privilege & sudo helper resolution
+if [ "$EUID" -eq 0 ]; then
+    SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+else
+    SUDO=""
+fi
+
+# 2. Arch/CachyOS Live USB tmpfs overlay expansion
+if [ -d "/run/archiso/cowspace" ] && [ "$EUID" -eq 0 ]; then
+    echo -e "  ${YELLOW}⚡ Detected Live ISO environment. Expanding cowspace overlay to 32G...${NC}"
+    mount -o remount,size=32G /run/archiso/cowspace 2>/dev/null || true
+fi
+
+# 3. Detect Missing Prerequisites
+NEED_PKGS=()
+NEED_PYTHON=false
+NEED_CRYPTO=false
+NEED_TAR=false
+NEED_ZSTD=false
+NEED_CURL=false
+
+if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+    NEED_PYTHON=true
+fi
+
+if ! command -v tar >/dev/null 2>&1; then
+    NEED_TAR=true
+fi
+
+if ! command -v zstd >/dev/null 2>&1; then
+    NEED_ZSTD=true
+fi
+
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    NEED_CURL=true
+fi
+
+# Check Python cryptography module
+PYTHON_BIN=""
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+fi
+
+if [ -n "$PYTHON_BIN" ]; then
+    if ! "$PYTHON_BIN" -c "import cryptography" 2>/dev/null; then
+        NEED_CRYPTO=true
+    fi
+else
+    NEED_CRYPTO=true
+fi
+
+# 4. Auto-install Missing Prerequisites if needed
+if [ "$NEED_PYTHON" = true ] || [ "$NEED_CRYPTO" = true ] || [ "$NEED_TAR" = true ] || [ "$NEED_ZSTD" = true ] || [ "$NEED_CURL" = true ]; then
+    echo -e "  ${YELLOW}📦 Missing prerequisites detected:${NC}"
+    [ "$NEED_PYTHON" = true ] && echo -e "     • Python 3 runtime"
+    [ "$NEED_CRYPTO" = true ] && echo -e "     • Python Cryptography library"
+    [ "$NEED_TAR" = true ]    && echo -e "     • tar archive utility"
+    [ "$NEED_ZSTD" = true ]   && echo -e "     • zstd compression utility"
+    [ "$NEED_CURL" = true ]   && echo -e "     • curl network downloader"
+
+    echo -e "  ${CYAN}🚀 Installing missing dependencies via host package manager...${NC}"
+
+    if command -v pacman >/dev/null 2>&1; then
+        PACMAN_PKGS=()
+        [ "$NEED_PYTHON" = true ] && PACMAN_PKGS+=("python")
+        [ "$NEED_CRYPTO" = true ] && PACMAN_PKGS+=("python-cryptography")
+        [ "$NEED_TAR" = true ]    && PACMAN_PKGS+=("tar")
+        [ "$NEED_ZSTD" = true ]   && PACMAN_PKGS+=("zstd")
+        [ "$NEED_CURL" = true ]   && PACMAN_PKGS+=("curl")
+        if [ ${#PACMAN_PKGS[@]} -gt 0 ]; then
+            $SUDO pacman -Sy --needed --noconfirm "${PACMAN_PKGS[@]}"
+        fi
+
+    elif command -v apt-get >/dev/null 2>&1; then
+        APT_PKGS=()
+        [ "$NEED_PYTHON" = true ] && APT_PKGS+=("python3")
+        [ "$NEED_CRYPTO" = true ] && APT_PKGS+=("python3-cryptography")
+        [ "$NEED_TAR" = true ]    && APT_PKGS+=("tar")
+        [ "$NEED_ZSTD" = true ]   && APT_PKGS+=("zstd")
+        [ "$NEED_CURL" = true ]   && APT_PKGS+=("curl")
+        if [ ${#APT_PKGS[@]} -gt 0 ]; then
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -y
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${APT_PKGS[@]}"
+        fi
+
+    elif command -v dnf >/dev/null 2>&1; then
+        DNF_PKGS=()
+        [ "$NEED_PYTHON" = true ] && DNF_PKGS+=("python3")
+        [ "$NEED_CRYPTO" = true ] && DNF_PKGS+=("python3-cryptography")
+        [ "$NEED_TAR" = true ]    && DNF_PKGS+=("tar")
+        [ "$NEED_ZSTD" = true ]   && DNF_PKGS+=("zstd")
+        [ "$NEED_CURL" = true ]   && DNF_PKGS+=("curl")
+        if [ ${#DNF_PKGS[@]} -gt 0 ]; then
+            $SUDO dnf install -y "${DNF_PKGS[@]}"
+        fi
+
+    elif command -v zypper >/dev/null 2>&1; then
+        ZYPPER_PKGS=()
+        [ "$NEED_PYTHON" = true ] && ZYPPER_PKGS+=("python3")
+        [ "$NEED_CRYPTO" = true ] && ZYPPER_PKGS+=("python3-cryptography")
+        [ "$NEED_TAR" = true ]    && ZYPPER_PKGS+=("tar")
+        [ "$NEED_ZSTD" = true ]   && ZYPPER_PKGS+=("zstd")
+        [ "$NEED_CURL" = true ]   && ZYPPER_PKGS+=("curl")
+        if [ ${#ZYPPER_PKGS[@]} -gt 0 ]; then
+            $SUDO zypper --non-interactive install "${ZYPPER_PKGS[@]}"
+        fi
+
+    elif command -v apk >/dev/null 2>&1; then
+        APK_PKGS=()
+        [ "$NEED_PYTHON" = true ] && APK_PKGS+=("python3")
+        [ "$NEED_CRYPTO" = true ] && APK_PKGS+=("py3-cryptography")
+        [ "$NEED_TAR" = true ]    && APK_PKGS+=("tar")
+        [ "$NEED_ZSTD" = true ]   && APK_PKGS+=("zstd")
+        [ "$NEED_CURL" = true ]   && APK_PKGS+=("curl")
+        if [ ${#APK_PKGS[@]} -gt 0 ]; then
+            $SUDO apk add --no-cache "${APK_PKGS[@]}"
+        fi
+    else
+        echo -e "  ${RED}⚠️  No recognized package manager (pacman/apt/dnf/zypper/apk) found.${NC}" >&2
+    fi
+
+    # Fallback verification for cryptography
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="python"
+    fi
+
+    if [ -n "$PYTHON_BIN" ]; then
+        if ! "$PYTHON_BIN" -c "import cryptography" 2>/dev/null; then
+            echo -e "  ${YELLOW}⚙️  Distro cryptography package not detected. Attempting pip fallback...${NC}"
+            $SUDO "$PYTHON_BIN" -m pip install cryptography --break-system-packages 2>/dev/null || \
+            $SUDO "$PYTHON_BIN" -m pip install cryptography 2>/dev/null || true
+        fi
+    fi
+fi
+
+# 5. Final Sanity Check
+if command -v python3 >/dev/null 2>&1; then
+    FINAL_PYTHON="python3"
+elif command -v python >/dev/null 2>&1; then
+    FINAL_PYTHON="python"
+else
+    echo -e "${RED}❌ Fatal: Python 3 could not be installed automatically.${NC}" >&2
+    echo -e "   Please install python3 manually and re-run this script." >&2
+    exit 1
+fi
+
+if ! "$FINAL_PYTHON" -c "import cryptography" 2>/dev/null; then
+    echo -e "${RED}❌ Fatal: Python 'cryptography' library could not be loaded.${NC}" >&2
+    echo -e "   Install it with: sudo apt install python3-cryptography (or sudo pacman -S python-cryptography)" >&2
+    exit 1
+fi
+
+echo -e "  ${GREEN}✅ Prerequisites verified (Python 3, cryptography, zstd, tar, curl).${NC}"
+echo -e "${BOLD}${CYAN}======================================================================${NC}\n"
+
+# 6. Transfer control to the Python recovery engine
+exec "$FINAL_PYTHON" "$RESTORE_PY" "$@"

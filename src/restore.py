@@ -8,7 +8,7 @@ import sys
 import subprocess
 from pathlib import Path
 
-ROOT_SCRIPT = Path(__file__).resolve().parent.parent / "emergency_restore.py"
+RESTORE_SCRIPT = Path(__file__).resolve().parent / "emergency_restore.py"
 
 if __name__ == '__main__':
-    sys.exit(subprocess.call([sys.executable, str(ROOT_SCRIPT)] + sys.argv[1:]))
+    sys.exit(subprocess.call([sys.executable, str(RESTORE_SCRIPT)] + sys.argv[1:]))
