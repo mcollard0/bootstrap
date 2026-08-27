@@ -677,8 +677,11 @@ class EmergencyRestorer:
                     # Automatically clean pacman package cache to keep disk space free
                     subprocess.run(['sudo', 'pacman', '-Sc', '--noconfirm'], check=False)
 
-                    # Move missing targets to AUR queue
+                    # Move missing targets to AUR queue, filtering out distro-specific packages on foreign distros
+                    cur_distro = self.current_os.get('os', {}).get('id', '')
                     for nf in not_found:
+                        if cur_distro != 'cachyos' and any(nf.startswith(pfx) for pfx in ['cachyos-', 'linux-cachyos', 'chwd', 'bpftune', 'grub-']):
+                            continue
                         if nf not in missing_aur:
                             missing_aur.append(nf)
 
@@ -706,6 +709,9 @@ class EmergencyRestorer:
                     flags = ['--needed', '--noconfirm']
                     if 'paru' in str(aur_helper):
                         flags.extend(['--skipreview', '--noprovides'])
+                    elif 'yay' in str(aur_helper):
+                        flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+
                     cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + missing_aur
                     try:
                         aur_newlines = chr(10) * (len(missing_aur) * 5 + 100)
@@ -732,11 +738,29 @@ class EmergencyRestorer:
             chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
             if not chrome_bin and aur_helper:
                 print(f"  🌟 Installing Google Chrome Beta via {Path(aur_helper).name}...")
+                c_flags = ['--needed', '--noconfirm']
+                if 'paru' in str(aur_helper):
+                    c_flags.extend(['--skipreview', '--noprovides'])
+                elif 'yay' in str(aur_helper):
+                    c_flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
                 try:
-                    subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S', '--needed', '--noconfirm', '--skipreview', '--noprovides', 'google-chrome-beta'], input=chr(10)*20, text=True, check=False)
+                    subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S'] + c_flags + ['google-chrome-beta'], input=chr(10)*20, text=True, check=False)
                     chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
                 except Exception as e:
                     print(f"  ⚠️  Google Chrome installation notice: {e}")
+
+            # Reliable direct makepkg fallback if AUR helper fails or times out
+            if not chrome_bin:
+                print(f"  🌟 Building Google Chrome Beta directly from AUR Git via makepkg...")
+                try:
+                    tmp_chrome = tempfile.mkdtemp(prefix="chrome_aur_")
+                    self._set_user_ownership(Path(tmp_chrome))
+                    subprocess.run(['sudo', '-u', self.target_user, 'git', 'clone', 'https://aur.archlinux.org/google-chrome-beta.git', f"{tmp_chrome}/google-chrome-beta"], check=True)
+                    subprocess.run(['sudo', '-u', self.target_user, 'makepkg', '-si', '--noconfirm'], cwd=f"{tmp_chrome}/google-chrome-beta", check=True)
+                    shutil.rmtree(tmp_chrome, ignore_errors=True)
+                    chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
+                except Exception as e:
+                    print(f"  ⚠️  Google Chrome makepkg build notice: {e}")
 
             if chrome_bin:
                 for target_link in ['/usr/bin/chrome', '/usr/bin/google-chrome', '/usr/local/bin/chrome', '/usr/local/bin/google-chrome']:
