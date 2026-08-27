@@ -8,7 +8,7 @@
 - **Type**: Defect / Security Risk
 - **Severity**: High
 - **Date Reported**: 2026-08-26
-- **Status**: Open / Triaged
+- **Status**: Resolved & Verified (2026-08-27)
 
 #### Description
 When invoking `setup_systemd.sh` or attempting a manual run of the systemd backup service with a new password on the command line, the new password was not honored. The resulting backup vault committed and dispatched was encrypted using the prior/default password (`[REDACTED_TEST_KEY]`) rather than the user's newly supplied password. This creates a severe recovery failure risk during a disaster if the operator expects their newly chosen password to decrypt the remote vault.
@@ -18,10 +18,27 @@ When invoking `setup_systemd.sh` or attempting a manual run of the systemd backu
 2. **Interactive Overwrite Block in `setup_systemd.sh`**: If `~/.config/systemd/user/bootstrap-backup.service` already exists, `setup_systemd.sh` prompts `Do you want to reconfigure and replace it? [Y/n]`. If run non-interactively or if confirmation is bypassed, the script exits without updating the existing unit.
 3. **Hardcoded Password in `ExecStart`**: Storing plaintext or escaped passwords directly in `ExecStart=/bin/bash ... --password "..."` makes password rotation cumbersome and requires `daemon-reload` on every change.
 
-#### Proposed Remediation
-1. **Dedicated Credentials File**: Store the master secret in a restricted permissions file (`~/.config/bootstrap/vault.env` mode `0600`) or systemd user credential store (`SetCredential=`), referenced via `EnvironmentFile=` in the service unit.
-2. **Force / Non-Interactive Flag in `setup_systemd.sh`**: Add `--force` / `-f` to `setup_systemd.sh` so `--password <NEW_PWD>` automatically replaces existing units and reloads `systemd --user` without interactive prompts.
-3. **Password Validation & Confirmation Output**: When `run_backup.sh` executes, log the SHA-256 fingerprint (first 8 hex characters) of the derived key or password salt so the user can immediately confirm which password version was used to seal the vault.
+#### Resolution & Implemented Changes
+1. **Dedicated Credentials File (`~/.config/bootstrap/vault.env`)**:
+   - Master password is now stored with mode `0600` inside `~/.config/bootstrap/vault.env` (directory permissions `0700`).
+   - Systemd user service unit references this file securely via `EnvironmentFile=-%h/.config/bootstrap/vault.env`.
+   - `ExecStart` no longer contains plaintext secrets, eliminating password exposure in process listings (`ps aux`).
+2. **Non-Interactive Force Flag (`--force` / `-f`)**:
+   - Added `--force` / `-f` to `scripts/setup_systemd.sh` so password updates and unit reconfigurations execute non-interactively without blocking.
+   - Schedule prompt is automatically bypassed when `--force` is provided.
+3. **Multi-Tier Password Resolution & Fingerprint Logging**:
+   - `src/bootstrap_scanner.py`, `scripts/run_backup.sh`, and `emergency_restore.py` now support the priority order:
+     1. Command-line flag (`--password <KEY>`)
+     2. Environment variable (`BOOTSTRAP_PASSWORD` / `VAULT_PASSWORD`)
+     3. Dedicated credential file (`~/.config/bootstrap/vault.env`)
+     4. Interactive prompt
+   - All tools log the non-sensitive SHA-256 fingerprint (`sha256:<first-8-hex>`) of the active password when encrypting and decrypting the vault, allowing instantaneous operator verification.
+
+#### Verification
+- Verified with rotation password `"[REDACTED_TEST_KEY]"`:
+  - Fingerprint logged at vault creation: `sha256:e0cb7389`.
+  - Manual systemd service run (`systemctl --user start bootstrap-backup.service`) successfully picked up the new password from `vault.env` and generated a valid encrypted vault (`data/bootstrap_vault_michael-asus-03_20260827_110430.tar.zst.enc`).
+  - Tested on clean Omarchy VM disaster recovery where `"[REDACTED_TEST_KEY]"` successfully decrypted the vault and restored system state.
 
 ---
 
