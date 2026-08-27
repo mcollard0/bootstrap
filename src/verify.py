@@ -6,7 +6,8 @@ Verifies the integrity, authenticity, and file checksums of an encrypted backup 
 1. Authenticates Poly1305 MAC and decrypts the vault
 2. Verifies manifest.json and manifest.txt
 3. Recalculates and verifies SHA-256 and SHA-1 checksums for every single file
-4. Inspects compression efficiency (zstd vs uncompressed) and permissions
+4. Formats output with SHA-256 and SHA-1 columns before the variable-length path
+5. Inspects compression efficiency (zstd vs uncompressed) and permissions
 """
 
 import os
@@ -17,7 +18,7 @@ import argparse
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 # Add src to path
 SRC_DIR = Path(__file__).parent
@@ -36,20 +37,28 @@ BOLD = '\033[1m'
 NC = '\033[0m'
 
 
-def find_latest_vault(search_dirs: List[Path] = None) -> Optional[Path]:
+def find_latest_vault(search_dirs: Optional[List[Path]] = None) -> Optional[Path]:
     """Find the most recent encrypted vault file."""
     if search_dirs is None:
         search_dirs = [
+            SRC_DIR.parent / 'data',
             SRC_DIR.parent / 'backup',
             Path('/run/media/michael/FAST_ARCHIVE/SystemBackups')
         ]
 
     vaults = []
     for d in search_dirs:
-        if d.exists() and d.is_dir():
-            for f in d.glob('bootstrap_vault_*.tar.*enc'):
-                if f.is_file():
-                    vaults.append((f, f.stat().st_mtime))
+        try:
+            if d.exists() and d.is_dir():
+                for pat in ['bootstrap_vault_*.tar.*enc']:
+                    for f in d.glob(pat):
+                        try:
+                            if f.is_file():
+                                vaults.append((f, f.stat().st_mtime))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
     if not vaults:
         return None
@@ -58,12 +67,17 @@ def find_latest_vault(search_dirs: List[Path] = None) -> Optional[Path]:
     return vaults[0][0]
 
 
-def verify_vault(vault_path: Path, password: str) -> bool:
+def verify_vault(vault_path: Path, password: str, full_hashes: Optional[bool] = None) -> bool:
     """Decrypt and verify vault checksums and manifests."""
     vault_path = Path(vault_path).resolve()
     if not vault_path.exists():
         print(f"{RED}Error: Vault file not found: {vault_path}{NC}", file=sys.stderr)
         return False
+
+    # Determine hash display mode (adaptive based on terminal width if not specified)
+    if full_hashes is None:
+        term_cols = shutil.get_terminal_size((120, 24)).columns
+        full_hashes = term_cols >= 150
 
     print(f"\n{BOLD}{BLUE}========================================================================{NC}")
     print(f"{BOLD}🔐 Bootstrap Vault Integrity & Checksum Verifier{NC}")
@@ -118,8 +132,15 @@ def verify_vault(vault_path: Path, password: str) -> bool:
 
         # 3. Verify Every File Checksum
         print(f"\n{BLUE}[3/3] Verifying Individual File SHA-256 and SHA-1 Checksums...{NC}")
-        print(f"{'STATUS':<8} {'PERMS':<6} {'SIZE':>10}  {'VIRTUAL PATH':<35}  {'SHA256 (FIRST 16)':<16}")
-        print("-" * 85)
+        
+        sha256_hdr = 'SHA256' if full_hashes else 'SHA256 (16)'
+        sha1_hdr = 'SHA1' if full_hashes else 'SHA1 (16)'
+        sha256_w = 64 if full_hashes else 16
+        sha1_w = 40 if full_hashes else 16
+
+        print(f"{'STATUS':<8} {'PERMS':<6} {'SIZE':>10}  {sha256_hdr:<{sha256_w}}  {sha1_hdr:<{sha1_w}}  {'VIRTUAL PATH'}")
+        sep_len = 8 + 1 + 6 + 1 + 10 + 2 + sha256_w + 2 + sha1_w + 2 + 35
+        print("-" * sep_len)
 
         passed = 0
         failed = 0
@@ -130,7 +151,9 @@ def verify_vault(vault_path: Path, password: str) -> bool:
             target_f = tmp_path / vp
 
             if not target_f.exists():
-                print(f"{RED}[MISSING]{NC} {'':<6} {'':>10}  {vp:<35}")
+                blank_256 = '-' * sha256_w
+                blank_1 = '-' * sha1_w
+                print(f"{RED}[MISSING]{NC} {'':<6} {'':>10}  {blank_256:<{sha256_w}}  {blank_1:<{sha1_w}}  {vp}")
                 missing += 1
                 continue
 
@@ -147,14 +170,17 @@ def verify_vault(vault_path: Path, password: str) -> bool:
             perms = entry.get('mode', oct(target_f.stat().st_mode)[-4:])
             sz_str = f"{len(file_bytes):,}"
 
+            disp_sha256 = calc_sha256 if full_hashes else calc_sha256[:16]
+            disp_sha1 = calc_sha1 if full_hashes else calc_sha1[:16]
+
             if match_256 and match_1:
-                print(f"{GREEN}[OK]{NC}      {perms:<6} {sz_str:>10}  {vp:<35}  {calc_sha256[:16]}")
+                print(f"{GREEN}[OK]{NC}      {perms:<6} {sz_str:>10}  {disp_sha256}  {disp_sha1}  {vp}")
                 passed += 1
             else:
-                print(f"{RED}[FAIL]{NC}    {perms:<6} {sz_str:>10}  {vp:<35}  {calc_sha256[:16]} != {expected_sha256[:16]}")
+                print(f"{RED}[FAIL]{NC}    {perms:<6} {sz_str:>10}  {disp_sha256}  {disp_sha1}  {vp}  (CHECKSUM MISMATCH)")
                 failed += 1
 
-        print("-" * 85)
+        print("-" * sep_len)
         print(f"\n{BOLD}Verification Summary:{NC}")
         print(f"   Files Verified:    {passed} / {len(manifest_entries)}")
         print(f"   Checksum Failures: {failed}")
@@ -171,7 +197,9 @@ def verify_vault(vault_path: Path, password: str) -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Bootstrap Encrypted Vault Verification Tool")
     parser.add_argument('--vault', type=str, default=None, help="Path to encrypted vault (.tar.zst.enc / .tar.enc)")
-    parser.add_argument('--password', type=str, default=None, help="Master password (or prompts)")
+    parser.add_argument('--password', '-p', type=str, default=None, help="Master password (or auto-resolved from vault.env / env)")
+    parser.add_argument('--full', action='store_true', help="Display full 64-char SHA-256 and 40-char SHA-1 hashes")
+    parser.add_argument('--short', action='store_true', help="Display compact 16-character truncated hashes")
 
     args = parser.parse_args()
 
@@ -181,8 +209,30 @@ def main():
         print("Error: No vault file found or specified.", file=sys.stderr)
         sys.exit(1)
 
-    password = args.password or prompt_for_password("vault verification")
-    success = verify_vault(vault_path, password)
+    # Multi-tier password resolution
+    password = args.password
+    if not password:
+        password = os.environ.get('BOOTSTRAP_PASSWORD') or os.environ.get('BOOTSTRAP_SECRET') or os.environ.get('VAULT_PASSWORD')
+    if not password:
+        vault_env = Path.home() / '.config' / 'bootstrap' / 'vault.env'
+        if vault_env.exists():
+            try:
+                for line in vault_env.read_text().splitlines():
+                    line = line.strip()
+                    if line.startswith('BOOTSTRAP_PASSWORD=') or line.startswith('VAULT_PASSWORD='):
+                        val = line.split('=', 1)[1].strip()
+                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                            val = val[1:-1]
+                        if val:
+                            password = val
+                            break
+            except Exception:
+                pass
+    if not password:
+        password = prompt_for_password("vault verification")
+
+    full_hashes = True if args.full else (False if args.short else None)
+    success = verify_vault(vault_path, password, full_hashes=full_hashes)
     sys.exit(0 if success else 1)
 
 

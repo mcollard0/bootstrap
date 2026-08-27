@@ -130,7 +130,7 @@ print_usage_instructions() {
     echo -e "  1. Open terminal"
     echo -e "  2. Run Step 0 prerequisites: ${BOLD}sudo pacman -Sy --noconfirm git python-cryptography${NC}"
     echo -e "  3. Clone or copy repo: ${BOLD}git clone https://github.com/mcollard0/bootstrap.git ~/bootstrap${NC}"
-    echo -e "  4. Run disaster recovery: ${BOLD}python3 ~/bootstrap/emergency_restore.py${NC}"
+    echo -e "  4. Run disaster recovery: ${BOLD}sudo ~/bootstrap/restore.sh${NC}"
     echo -e "${BOLD}${GREEN}============================================================${NC}"
 }
 
