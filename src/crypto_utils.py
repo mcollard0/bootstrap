@@ -430,7 +430,7 @@ def prompt_for_password(purpose: str = "encryption", allow_env_fallback: bool = 
 if __name__ == '__main__':
     print("🧪 Running cryptographic tests...")
     crypto = SecureBootstrapCrypto()
-    test_pwd = "[REDACTED_MOCK_PWD]"
+    test_pwd = "mock_unit_test_phrase_only"
     test_data = "Sample test payload for crypto validation"
 
     enc = crypto.encrypt(test_data, test_pwd)

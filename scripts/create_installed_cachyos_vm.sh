@@ -186,6 +186,13 @@ EOF"
         sudo cp -rT "$TARGET_MNT/etc/skel" "$TARGET_MNT/home/${vm_user}" 2>/dev/null || true
         sudo chown -R 1000:1000 "$TARGET_MNT/home/${vm_user}"
         sudo chmod 700 "$TARGET_MNT/home/${vm_user}"
+        if [[ -f "$HOME/.ssh/id_ed25519.pub" ]]; then
+            sudo mkdir -p "$TARGET_MNT/home/${vm_user}/.ssh"
+            sudo cp "$HOME/.ssh/id_ed25519.pub" "$TARGET_MNT/home/${vm_user}/.ssh/authorized_keys"
+            sudo chown -R 1000:1000 "$TARGET_MNT/home/${vm_user}/.ssh"
+            sudo chmod 700 "$TARGET_MNT/home/${vm_user}/.ssh"
+            sudo chmod 600 "$TARGET_MNT/home/${vm_user}/.ssh/authorized_keys"
+        fi
     fi
 
     # Passwordless sudo for wheel and user
