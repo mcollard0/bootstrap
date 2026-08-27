@@ -68,7 +68,7 @@ class SystemDetector:
 
         # Classify family
         all_ids = f"{info['id']} {info['id_like']}".split()
-        if any(x in all_ids for x in ['arch', 'cachyos', 'manjaro', 'endeavouros', 'artix']):
+        if any(x in all_ids for x in ['arch', 'cachyos', 'omarchy', 'manjaro', 'endeavouros', 'artix']):
             info['family'] = 'arch'
         elif any(x in all_ids for x in ['ubuntu', 'debian', 'pop', 'mint', 'elementary', 'kali']):
             info['family'] = 'debian'

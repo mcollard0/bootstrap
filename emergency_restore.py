@@ -437,6 +437,32 @@ class EmergencyRestorer:
                         continue
                     except Exception as e:
                         print(f"  ⚠️  Notice on .gitconfig: {e}")
+                
+                # Distro-portable sanitization for Fish shell configuration
+                if str(rel_f) == ".config/fish/config.fish":
+                    try:
+                        f_text = src_f.read_text(encoding='utf-8')
+                        f_text = f_text.replace(
+                            "source /usr/share/cachyos-fish-config/cachyos-config.fish",
+                            "test -f /usr/share/cachyos-fish-config/cachyos-config.fish && source /usr/share/cachyos-fish-config/cachyos-config.fish"
+                        )
+                        f_text = f_text.replace(
+                            "~/.local/bin/zoxide init fish | source",
+                            "test -x ~/.local/bin/zoxide && ~/.local/bin/zoxide init fish | source"
+                        )
+                        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_f:
+                            tmp_f.write(f_text)
+                            tmp_f_path = Path(tmp_f.name)
+                        try:
+                            res = self._safe_copy_file(tmp_f_path, dest_f, mode=0o644)
+                        finally:
+                            tmp_f_path.unlink()
+                        if res != 'skipped':
+                            print(f"  {GREEN}+ [{res.upper()}]{NC} {rel_f} (with cross-distro portability)")
+                        self._set_user_ownership(dest_f)
+                    except Exception as e:
+                        print(f"  ⚠️  Notice: fish config customization failed: {e}")
+                    continue
 
                 # Preserve strict permissions for keys
                 mode = None
@@ -501,8 +527,43 @@ class EmergencyRestorer:
                 if str(rel_f) == "etc/fstab":
                     continue
 
-                # Ensure custom repos in pacman.conf don't fail due to PGP trust issues
+                # Ensure custom repos in pacman.conf don't fail due to PGP trust issues or broken distro mirrorlists
                 if str(rel_f) == "etc/pacman.conf":
+                    cur_os = self.detector.os_info.get('id', '')
+                    if cur_os != 'cachyos' and dest_f.exists():
+                        try:
+                            import re
+                            cur_text = dest_f.read_text(encoding='utf-8')
+                            src_text = src_f.read_text(encoding='utf-8')
+                            custom_sections = re.findall(r'(\[(?!options|core|extra|multilib|omarchy|community)[^\]]+\][^\[]*)', src_text)
+                            added = False
+                            for sec in custom_sections:
+                                sec_header = sec.split('\n')[0].strip()
+                                # Ignore non-repo header comments or directives
+                                if not re.match(r'^\[[a-zA-Z0-9_-]+\]$', sec_header):
+                                    continue
+                                # Must contain an active (uncommented) Server directive
+                                if not re.search(r'^\s*Server\s*=\s*\S+', sec, re.MULTILINE):
+                                    continue
+                                # Verify that any Include file referenced actually exists on the target disk
+                                inc_matches = re.findall(r'Include\s*=\s*([^\s\n]+)', sec)
+                                if any(not os.path.exists(inc) for inc in inc_matches):
+                                    continue
+                                if sec_header not in cur_text:
+                                    hardened_sec = re.sub(r'(\[[^\]]*\]\n)', r'\1SigLevel = Optional TrustAll\n', sec)
+                                    cur_text += f"\n# Custom repo from Disaster Recovery\n{hardened_sec.strip()}\n"
+                                    added = True
+                            if added:
+                                dest_f.write_text(cur_text, encoding='utf-8')
+                                print(f"  {GREEN}+ [UPDATED]{NC} /etc/pacman.conf (merged custom third-party repositories)")
+                                subprocess.run(['pacman-key', '--recv-keys', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
+                                subprocess.run(['pacman-key', '--lsign-key', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
+                            else:
+                                print(f"  • [SKIPPED] /etc/pacman.conf (preserved target distro repository layout)")
+                        except Exception as e:
+                            print(f"  ⚠️  Error merging custom repos to /etc/pacman.conf: {e}")
+                        continue
+
                     try:
                         import re
                         pconf_text = src_f.read_text(encoding='utf-8')
@@ -731,6 +792,19 @@ class EmergencyRestorer:
                 shutil.which(Path(target_shell_bin).name) or 
                 (f"/usr/bin/{target_shell_bin}" if Path(f"/usr/bin/{target_shell_bin}").exists() else None)
             )
+            if not resolved_shell:
+                pkg_name = Path(target_shell_bin).name
+                if shutil.which('pacman'):
+                    print(f"  📦 Installing user preferred shell '{pkg_name}' via pacman...")
+                    subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', pkg_name], check=False)
+                elif shutil.which('apt'):
+                    subprocess.run(['sudo', 'apt', 'install', '-y', pkg_name], check=False)
+                resolved_shell = (
+                    shutil.which(target_shell_bin) or 
+                    shutil.which(Path(target_shell_bin).name) or 
+                    (f"/usr/bin/{target_shell_bin}" if Path(f"/usr/bin/{target_shell_bin}").exists() else None)
+                )
+
             if resolved_shell:
                 try:
                     # Ensure in /etc/shells
@@ -855,15 +929,18 @@ class EmergencyRestorer:
                 self.restore_shell_and_desktop_preferences(inventory)
             elif choice.lower() == 'q':
                 print("Restoration cancelled.")
+                return
+
             print(f"\n{GREEN}🎉 Emergency restoration completed successfully!{NC}")
             print(f"\n{BOLD}{YELLOW}🔔 Post-Restoration Actions & Reminders:{NC}")
             print(f"  {BOLD}1. Desktop Keyboard Shortcuts (Ctrl+Alt+T):{NC}")
-            print(f"     In KDE Plasma / Wayland, hotkey mappings require a session restart to take effect.")
+            print(f"     In desktop sessions, hotkey mappings require a session restart to take effect.")
             print(f"     👉 Restart your display manager (or log out and log back in):")
             print(f"        {CYAN}sudo systemctl restart display-manager{NC}")
             print(f"  {BOLD}2. Terminal & Shell Environment:{NC}")
             print(f"     👉 Restart your terminal window or reload your shell for environment variables to take effect:")
             print(f"        {CYAN}exec fish{NC}  (or open a new terminal window)\n")
+        finally:
             shutil.rmtree(stage_dir, ignore_errors=True)
 
 

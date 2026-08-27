@@ -93,6 +93,22 @@ if [[ -d "$XDG_CONF_DIR" ]]; then
     echo "  ✓ Configured freedesktop xdg-terminal-exec: $DESKTOP_FILE"
 fi
 
+# 4. Configure Hyprland shortcuts if present
+HYPR_BINDINGS="$TARGET_HOME/.config/hypr/bindings.lua"
+if [[ -f "$HYPR_BINDINGS" ]]; then
+    sudo -u "$TARGET_USER" bash -c "
+        sed -i '/CTRL + ALT + T/d' '$HYPR_BINDINGS'
+        echo 'o.bind(\"CTRL + ALT + T\", \"Default Terminal\", \"$APP_BIN\")' >> '$HYPR_BINDINGS'
+    " 2>/dev/null || true
+    if [[ -d "/run/user/$TARGET_UID/hypr" ]]; then
+        SIG=$(ls -1 "/run/user/$TARGET_UID/hypr" 2>/dev/null | head -n 1 || true)
+        if [[ -n "$SIG" ]]; then
+            sudo -u "$TARGET_USER" HYPRLAND_INSTANCE_SIGNATURE="$SIG" hyprctl reload 2>/dev/null || true
+        fi
+    fi
+    echo "  ✓ Configured Hyprland Ctrl+Alt+T: $APP_BIN"
+fi
+
 # 4. Configure Debian/Ubuntu alternatives if available
 if which update-alternatives >/dev/null 2>&1; then
     if [[ -x "/usr/bin/$APP_BIN" ]]; then
