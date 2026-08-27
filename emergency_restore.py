@@ -324,6 +324,9 @@ class EmergencyRestorer:
         lines_to_add = []
         mount_dirs_to_create = []
 
+        # Root system mount points from the old backup that belong to the previous OS disk and should NOT be appended to a new installation
+        SYSTEM_MOUNT_POINTS = {'/', '/home', '/root', '/srv', '/var', '/var/cache', '/var/tmp', '/var/log', '/boot', '/boot/efi', '/tmp'}
+
         for line in fstab_content.splitlines():
             line_clean = line.strip()
             if not line_clean or line_clean.startswith('#'):
@@ -331,19 +334,29 @@ class EmergencyRestorer:
             parts = line_clean.split()
             if len(parts) >= 2:
                 mp = parts[1]
+                fstype = parts[2] if len(parts) >= 3 else ''
+                
+                # Skip old root filesystem subvolumes
+                if mp in SYSTEM_MOUNT_POINTS:
+                    continue
+
                 if mp.startswith('/run/media/') or mp.startswith('/mnt/') or mp.startswith('/media/'):
                     mount_dirs_to_create.append(mp)
+
                 if mp not in existing_mounts:
-                    # Automatically harden secondary archive mounts with non-blocking, nofail, and automount options
-                    if len(parts) >= 4 and (mp.startswith('/run/media/') or mp.startswith('/mnt/') or mp.startswith('/media/')):
-                        dev, mount_point, fstype, opts = parts[0], parts[1], parts[2], parts[3]
+                    # Automatically harden secondary archive mounts and swap with non-blocking nofail options
+                    if len(parts) >= 4:
+                        dev, mount_point, fstype_val, opts = parts[0], parts[1], parts[2], parts[3]
                         opts_list = [o.strip() for o in opts.split(',')]
-                        for safe_opt in ['nofail', 'x-systemd.device-timeout=5s', 'x-systemd.automount']:
+                        safe_opts = ['nofail', 'x-systemd.device-timeout=5s']
+                        if mount_point.startswith('/run/media/') or mount_point.startswith('/mnt/') or mount_point.startswith('/media/'):
+                            safe_opts.append('x-systemd.automount')
+                        for safe_opt in safe_opts:
                             opt_prefix = safe_opt.split('=')[0]
                             if not any(o.startswith(opt_prefix) for o in opts_list):
                                 opts_list.append(safe_opt)
                         new_opts = ','.join(opts_list)
-                        hardened_line = f"{dev:<45} {mount_point:<35} {fstype:<10} {new_opts:<65} 0 0"
+                        hardened_line = f"{dev:<45} {mount_point:<35} {fstype_val:<10} {new_opts:<65} 0 0"
                         lines_to_add.append(hardened_line)
                     else:
                         lines_to_add.append(line)
@@ -643,7 +656,9 @@ class EmergencyRestorer:
                             for aur_pkg in missing_aur:
                                 item_cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + [aur_pkg]
                                 try:
-                                    subprocess.run(item_cmd, input=aur_newlines, text=True)
+                                    subprocess.run(item_cmd, input=aur_newlines, text=True, timeout=180)
+                                except subprocess.TimeoutExpired:
+                                    print(f"  ⚠️  AUR package '{aur_pkg}' exceeded compile timeout (3 min), skipping to maintain disaster recovery velocity.")
                                 except Exception:
                                     pass
                     except Exception as e:
