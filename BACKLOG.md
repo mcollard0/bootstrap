@@ -11,7 +11,7 @@
 - **Status**: Resolved & Verified (2026-08-27)
 
 #### Description
-When invoking `setup_systemd.sh` or attempting a manual run of the systemd backup service with a new password on the command line, the new password was not honored. The resulting backup vault committed and dispatched was encrypted using the prior/default password (`[REDACTED_TEST_KEY]`) rather than the user's newly supplied password. This creates a severe recovery failure risk during a disaster if the operator expects their newly chosen password to decrypt the remote vault.
+When invoking `setup_systemd.sh` or attempting a manual run of the systemd backup service with a new password on the command line, the new password was not honored. The resulting backup vault committed and dispatched was encrypted using the prior cached password rather than the operator's newly supplied password. This creates a severe recovery failure risk during a disaster if the operator expects their newly chosen password to decrypt the remote vault.
 
 #### Root Causes
 1. **Systemctl Inability to Accept Dynamic CLI Arguments**: `systemctl --user start bootstrap-backup.service` executes the static `ExecStart` line in the existing unit file; systemd does not accept runtime parameter overrides via `systemctl start`.
@@ -35,10 +35,10 @@ When invoking `setup_systemd.sh` or attempting a manual run of the systemd backu
    - All tools log the non-sensitive SHA-256 fingerprint (`sha256:<first-8-hex>`) of the active password when encrypting and decrypting the vault, allowing instantaneous operator verification.
 
 #### Verification
-- Verified with rotation password `"[REDACTED_TEST_KEY]"`:
+- Verified with rotated test key:
   - Fingerprint logged at vault creation: `sha256:e0cb7389`.
   - Manual systemd service run (`systemctl --user start bootstrap-backup.service`) successfully picked up the new password from `vault.env` and generated a valid encrypted vault (`data/bootstrap_vault_michael-asus-03_20260827_110430.tar.zst.enc`).
-  - Tested on clean Omarchy VM disaster recovery where `"[REDACTED_TEST_KEY]"` successfully decrypted the vault and restored system state.
+  - Tested on clean Omarchy VM disaster recovery where the newly rotated test password successfully decrypted the vault and restored system state.
 
 ---
 

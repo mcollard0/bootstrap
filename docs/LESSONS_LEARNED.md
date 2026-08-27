@@ -12,7 +12,7 @@ This document records architectural, operational, and practical lessons learned 
 In Linux shells (Bash, Zsh, Fish), certain characters are interpreted as syntactic operators or history modifiers rather than literal text:
 
 - **`!` (History Expansion Metacharacter)**:
-  - In interactive Bash, `!` triggers history substitution (e.g. `"[REDACTED_TEST_KEY]"` triggers `bash: !SpecialWord: event not found`).
+  - In interactive Bash, `!` triggers history substitution (e.g. `"SamplePass!Word"` triggers `bash: !Word: event not found`).
   - Double quotes (`"..."`) do **not** prevent history expansion in interactive shells; escaping (`\!`) or strict single quotes (`'...'`) are required.
 - **`&` (Job Control & Stream Operator)**:
   - Unquoted or incorrectly passed `&` characters cause commands to fork into background subshells.
