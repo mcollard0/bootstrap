@@ -212,8 +212,8 @@ EOF
     chmod 0600 "$vault_env_file"
     log_success "Master password stored securely in $vault_env_file (mode 0600)."
 
-    # Select schedule if interactive and not explicitly specified via flags
-    if [[ "$schedule_explicitly_set" == false && -t 0 ]]; then
+    # Select schedule if interactive, force not set, and not explicitly specified via flags
+    if [[ "$schedule_explicitly_set" == false && "$force_replace" == false && -t 0 ]]; then
         echo -e "\nSelect backup schedule:"
         echo "  1) Weekly on Monday at 3:00 AM [Default]"
         echo "  2) Daily at 3:00 AM"
