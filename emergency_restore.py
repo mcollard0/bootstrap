@@ -703,8 +703,8 @@ class EmergencyRestorer:
                         print(f"  ⚠️  Could not auto-install paru helper: {e}")
 
                 if aur_helper:
-                    # Prioritize critical interactive applications like chrome and warp first
-                    missing_aur.sort(key=lambda x: 0 if 'chrome' in x.lower() else (1 if 'warp' in x.lower() else 2))
+                    # Prioritize critical interactive applications like chrome, warp, and antigravity first
+                    missing_aur.sort(key=lambda x: 0 if 'chrome' in x.lower() else (1 if 'warp' in x.lower() else (2 if 'antigravity' in x.lower() else 3)))
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
                     flags = ['--needed', '--noconfirm']
                     if 'paru' in str(aur_helper):
@@ -792,6 +792,82 @@ class EmergencyRestorer:
                 print(f"  {GREEN}✅ Warp Terminal is verified and runnable: {warp_bin}{NC}")
             else:
                 print(f"  ⚠️  Warp Terminal binary not found.")
+
+            # Antigravity IDE verification & installation
+            ide_bin = shutil.which('antigravity-ide') or shutil.which('antigravity')
+            if not ide_bin and aur_helper:
+                print(f"  🌟 Installing Antigravity IDE via {Path(aur_helper).name}...")
+                c_flags = ['--needed', '--noconfirm']
+                if 'paru' in str(aur_helper):
+                    c_flags.extend(['--skipreview', '--noprovides'])
+                elif 'yay' in str(aur_helper):
+                    c_flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+                try:
+                    subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S'] + c_flags + ['antigravity-ide'], input=chr(10)*20, text=True, check=False)
+                    ide_bin = shutil.which('antigravity-ide') or shutil.which('antigravity')
+                except Exception as e:
+                    print(f"  ⚠️  Antigravity IDE helper notice: {e}")
+
+            if not ide_bin:
+                print(f"  🌟 Building Antigravity IDE directly from AUR Git via makepkg...")
+                try:
+                    tmp_ide = tempfile.mkdtemp(prefix="antigravity_aur_")
+                    self._set_user_ownership(Path(tmp_ide))
+                    subprocess.run(['sudo', '-u', self.target_user, 'git', 'clone', 'https://aur.archlinux.org/antigravity-ide.git', f"{tmp_ide}/antigravity-ide"], check=True)
+                    subprocess.run(['sudo', '-u', self.target_user, 'makepkg', '-si', '--noconfirm'], cwd=f"{tmp_ide}/antigravity-ide", check=True)
+                    shutil.rmtree(tmp_ide, ignore_errors=True)
+                    ide_bin = shutil.which('antigravity-ide') or shutil.which('antigravity')
+                except Exception as e:
+                    print(f"  ⚠️  Antigravity IDE makepkg build notice: {e}")
+
+            if ide_bin:
+                for target_link in ['/usr/bin/antigravity', '/usr/local/bin/antigravity', '/usr/local/bin/antigravity-ide']:
+                    try:
+                        if not os.path.exists(target_link):
+                            subprocess.run(['ln', '-sf', ide_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Antigravity IDE is verified and runnable: {ide_bin}{NC}")
+            else:
+                print(f"  ⚠️  Antigravity IDE binary not found.")
+
+            # Antigravity CLI (agy) verification & installation
+            agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
+            if not agy_bin and aur_helper:
+                print(f"  🌟 Installing Antigravity CLI via {Path(aur_helper).name}...")
+                c_flags = ['--needed', '--noconfirm']
+                if 'paru' in str(aur_helper):
+                    c_flags.extend(['--skipreview', '--noprovides'])
+                elif 'yay' in str(aur_helper):
+                    c_flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+                try:
+                    subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S'] + c_flags + ['antigravity-cli'], input=chr(10)*20, text=True, check=False)
+                    agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
+                except Exception as e:
+                    print(f"  ⚠️  Antigravity CLI helper notice: {e}")
+
+            if not agy_bin:
+                print(f"  🌟 Building Antigravity CLI directly from AUR Git via makepkg...")
+                try:
+                    tmp_agy = tempfile.mkdtemp(prefix="agy_aur_")
+                    self._set_user_ownership(Path(tmp_agy))
+                    subprocess.run(['sudo', '-u', self.target_user, 'git', 'clone', 'https://aur.archlinux.org/antigravity-cli.git', f"{tmp_agy}/antigravity-cli"], check=True)
+                    subprocess.run(['sudo', '-u', self.target_user, 'makepkg', '-si', '--noconfirm'], cwd=f"{tmp_agy}/antigravity-cli", check=True)
+                    shutil.rmtree(tmp_agy, ignore_errors=True)
+                    agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
+                except Exception as e:
+                    print(f"  ⚠️  Antigravity CLI makepkg build notice: {e}")
+
+            if agy_bin:
+                for target_link in ['/usr/bin/antigravity-cli', '/usr/local/bin/agy', '/usr/local/bin/antigravity-cli']:
+                    try:
+                        if not os.path.exists(target_link):
+                            subprocess.run(['ln', '-sf', agy_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Antigravity CLI is verified and runnable: {agy_bin}{NC}")
+            else:
+                print(f"  ⚠️  Antigravity CLI binary not found.")
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
