@@ -540,9 +540,9 @@ class EmergencyRestorer:
             native_pkgs = [p['name'] for p in packages.get('arch_native', []) if 'name' in p]
             aur_pkgs = [p['name'] for p in packages.get('arch_aur', []) if 'name' in p]
 
-            # 1. Synchronize package databases first so any restored repos are known (non-interactive)
-            print("  🔄 Synchronizing pacman package databases...")
-            subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
+            # 1. Synchronize package databases and upgrade base libraries first (prevents partial upgrade dependency conflicts on rolling Arch/CachyOS)
+            print("  🔄 Synchronizing pacman package databases and upgrading system...")
+            subprocess.run(['sudo', 'pacman', '-Syu', '--noconfirm'], check=False)
 
             # Ensure base-devel and default Java runtime are installed so AUR compiles and packages like openwebstart-bin do not trigger 28-provider selection prompts
             subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel', 'jre17-openjdk'], check=False)
