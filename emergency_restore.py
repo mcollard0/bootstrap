@@ -206,6 +206,7 @@ class EmergencyRestorer:
         self.crypto = SecureBootstrapCrypto()
         self.detector = SystemDetector()
         self.current_os = self.detector.to_dict()
+        self.current_family = self.detector.os_info.get('family', '')
 
         # Determine target non-root user (never use root for user files or AUR builds)
         resolved_user = target_user or os.environ.get('SUDO_USER')
@@ -495,14 +496,15 @@ class EmergencyRestorer:
                                 self._set_user_ownership(p)
                             except Exception:
                                 pass
-                        for name in fnames:
-                            p = Path(root) / name
-                            try:
-                                self._set_user_ownership(p)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+        # Recursively ensure user owns everything restored under their home directory
+        try:
+            for root, dirs, fnames in os.walk(self.user_home):
+                for name in dirs:
+                    self._set_user_ownership(Path(root) / name)
+                for name in fnames:
+                    self._set_user_ownership(Path(root) / name)
+        except Exception as e:
+            print(f"  ⚠️  Notice on user ownership recursion: {e}")
 
         print(f"  {GREEN}✅ User files restored: {count_created} created, {count_updated} updated, {count_skipped} already matching.{NC}")
 
@@ -886,6 +888,7 @@ class EmergencyRestorer:
                     'cmake': 'cmake',
                     'curl': 'curl',
                     'dust': 'du-dust',
+                    'eza': 'eza',
                     'fastfetch': 'fastfetch',
                     'fish': 'fish',
                     'git': 'git',
@@ -984,6 +987,8 @@ class EmergencyRestorer:
 
             # 3. Antigravity IDE
             ide_bin = shutil.which('antigravity-ide') or shutil.which('antigravity')
+            if not ide_bin and Path('/opt/antigravity-ide/antigravity-ide').exists():
+                ide_bin = '/opt/antigravity-ide/antigravity-ide'
             if not ide_bin:
                 print(f"  🌟 Installing Google Antigravity IDE from official release...")
                 try:
@@ -994,7 +999,10 @@ class EmergencyRestorer:
                     subprocess.run(['sudo', 'mkdir', '-p', str(opt_dest)], check=True)
                     subprocess.run(['sudo', 'tar', '-xzf', str(tar_path), '-C', str(opt_dest), '--strip-components=1'], check=True)
                     shutil.rmtree(tmp_ide_dir, ignore_errors=True)
-                    ide_bin = '/opt/antigravity-ide/antigravity'
+                    for candidate in ['antigravity-ide', 'antigravity']:
+                        if (opt_dest / candidate).exists():
+                            ide_bin = str(opt_dest / candidate)
+                            break
                 except Exception as e:
                     print(f"  ⚠️  Antigravity IDE installation notice: {e}")
 
@@ -1011,21 +1019,12 @@ class EmergencyRestorer:
             # 4. Antigravity CLI (agy)
             agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
             if not agy_bin:
-                print(f"  🌟 Installing Google Antigravity CLI (agy) from official release...")
+                print(f"  🌟 Installing Google Antigravity CLI (agy) via official installer...")
                 try:
-                    tmp_agy_dir = tempfile.mkdtemp(prefix="agy_cli_")
-                    tar_path = Path(tmp_agy_dir) / "agy.tar.gz"
-                    subprocess.run(['curl', '-fsSL', 'https://dl.google.com/release2/j0qc3/antigravity/cli/1.1.22_5711547746615296-x86_64.tar.gz', '-o', str(tar_path)], check=True)
-                    subprocess.run(['tar', '-xzf', str(tar_path), '-C', tmp_agy_dir], check=True)
-                    found_agy = None
-                    for root, _, fnames in os.walk(tmp_agy_dir):
-                        if 'agy' in fnames:
-                            found_agy = os.path.join(root, 'agy')
-                            break
-                    if found_agy:
-                        subprocess.run(['sudo', 'install', '-m', '755', found_agy, '/usr/local/bin/agy'], check=True)
+                    subprocess.run("curl -fsSL https://antigravity.google/cli/install.sh | sudo bash -s -- -d /usr/local/bin", shell=True, check=False)
+                    agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
+                    if not agy_bin and Path('/usr/local/bin/agy').exists():
                         agy_bin = '/usr/local/bin/agy'
-                    shutil.rmtree(tmp_agy_dir, ignore_errors=True)
                 except Exception as e:
                     print(f"  ⚠️  Antigravity CLI installation notice: {e}")
 

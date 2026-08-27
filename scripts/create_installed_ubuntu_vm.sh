@@ -126,7 +126,7 @@ packages:
 
 runcmd:
   - systemctl enable --now qemu-guest-agent
-  - echo "$vm_user ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-michael-nopasswd
+  - [ sh, -c, "echo '$vm_user ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-michael-nopasswd" ]
   - chmod 0440 /etc/sudoers.d/99-michael-nopasswd
 EOF
 
