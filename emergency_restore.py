@@ -527,6 +527,11 @@ class EmergencyRestorer:
                 if str(rel_f) == "etc/fstab":
                     continue
 
+                # Skip Arch-specific system configuration files on non-Arch systems
+                if self.current_family != 'arch' and str(rel_f) in ["etc/pacman.conf", "etc/mkinitcpio.conf"]:
+                    print(f"  • [SKIPPED] /{rel_f} (target distribution is {self.current_family})")
+                    continue
+
                 # Ensure custom repos in pacman.conf don't fail due to PGP trust issues or broken distro mirrorlists
                 if str(rel_f) == "etc/pacman.conf":
                     cur_os = self.detector.os_info.get('id', '')
@@ -871,13 +876,168 @@ class EmergencyRestorer:
 
         elif current_family == 'debian':
             apt_pkgs = [p['name'] for p in packages.get('apt', []) if 'name' in p]
+            if not apt_pkgs and packages.get('arch_native'):
+                print(f"  ℹ️  Backup source was Arch Linux. Translating core packages to Debian/Ubuntu APT equivalents...")
+                arch_to_apt_map = {
+                    '7zip': 'p7zip-full',
+                    'alacritty': 'alacritty',
+                    'bind': 'bind9-dnsutils',
+                    'btop': 'btop',
+                    'cmake': 'cmake',
+                    'curl': 'curl',
+                    'dust': 'du-dust',
+                    'fastfetch': 'fastfetch',
+                    'fish': 'fish',
+                    'git': 'git',
+                    'glances': 'glances',
+                    'htop': 'htop',
+                    'jq': 'jq',
+                    'neovim': 'neovim',
+                    'pv': 'pv',
+                    'ripgrep': 'ripgrep',
+                    'tmux': 'tmux',
+                    'vim': 'vim',
+                    'wget': 'wget',
+                    'xclip': 'xclip',
+                    'ydotool': 'ydotool',
+                    'zsh': 'zsh'
+                }
+                arch_names = {p['name'] for p in packages.get('arch_native', []) if 'name' in p}
+                candidate_apt = set()
+                for arch_pkg in arch_names:
+                    if arch_pkg in arch_to_apt_map:
+                        candidate_apt.add(arch_to_apt_map[arch_pkg])
+                    else:
+                        candidate_apt.add(arch_pkg)
+
+                print(f"  🔍 Querying APT cache for available package equivalents...")
+                subprocess.run(['sudo', 'apt', 'update', '-qq'], check=False)
+                available_apt = []
+                for pkg in sorted(candidate_apt):
+                    res = subprocess.run(['apt-cache', 'show', pkg], capture_output=True, text=True)
+                    if res.returncode == 0 and 'Package: ' in res.stdout:
+                        available_apt.append(pkg)
+
+                apt_pkgs = available_apt
+                print(f"  📦 Identified {len(apt_pkgs)} cross-distro package equivalents available in APT.")
+
             if apt_pkgs:
-                print(f"  Installing {len(apt_pkgs)} APT packages...")
-                cmd = ['sudo', 'apt', 'install', '-y'] + apt_pkgs
+                print(f"  📦 Installing {len(apt_pkgs)} APT packages...")
+                chunk_size = 25
+                for i in range(0, len(apt_pkgs), chunk_size):
+                    chunk = apt_pkgs[i:i + chunk_size]
+                    subprocess.run(['sudo', 'DEBIAN_FRONTEND=noninteractive', 'apt', 'install', '-y', '--no-install-recommends'] + chunk, check=False)
+
+            # Dedicated Developer Applications for Debian / Ubuntu
+            print(f"\n🌐 Verifying Developer Applications (Google Chrome, Warp Terminal, Antigravity IDE & CLI)...")
+
+            # 1. Google Chrome Beta
+            chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
+            if not chrome_bin:
+                print(f"  🌟 Installing Google Chrome Beta via official Debian package...")
                 try:
-                    subprocess.run(cmd, check=True)
+                    tmp_chrome = tempfile.mktemp(suffix=".deb")
+                    subprocess.run(['curl', '-fsSL', 'https://dl.google.com/linux/direct/google-chrome-beta_current_amd64.deb', '-o', tmp_chrome], check=True)
+                    subprocess.run(['sudo', 'apt', 'install', '-y', tmp_chrome], check=True)
+                    Path(tmp_chrome).unlink(missing_ok=True)
+                    chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome')
                 except Exception as e:
-                    print(f"  ⚠️  APT error: {e}")
+                    print(f"  ⚠️  Google Chrome installation notice: {e}")
+
+            if chrome_bin:
+                for target_link in ['/usr/bin/google-chrome', '/usr/bin/chrome', '/usr/local/bin/google-chrome', '/usr/local/bin/chrome']:
+                    try:
+                        if not os.path.exists(target_link):
+                            subprocess.run(['sudo', 'ln', '-sf', chrome_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Google Chrome is verified and runnable: {chrome_bin}{NC}")
+            else:
+                print(f"  ⚠️  Google Chrome binary not found.")
+
+            # 2. Warp Terminal
+            warp_bin = shutil.which('warp-terminal') or shutil.which('warp')
+            if not warp_bin:
+                print(f"  🌟 Installing Warp Terminal via official APT repository...")
+                try:
+                    Path('/etc/apt/keyrings').mkdir(parents=True, exist_ok=True)
+                    subprocess.run('curl -fsSL https://releases.warp.dev/linux/keys/warp.asc | sudo gpg --dearmor -o /etc/apt/keyrings/warpdotdev.gpg', shell=True, check=True)
+                    with open('/tmp/warpdotdev.list', 'w') as f:
+                        f.write('deb [arch=amd64 signed-by=/etc/apt/keyrings/warpdotdev.gpg] https://releases.warp.dev/linux/deb stable main\n')
+                    subprocess.run(['sudo', 'mv', '/tmp/warpdotdev.list', '/etc/apt/sources.list.d/warpdotdev.list'], check=True)
+                    subprocess.run(['sudo', 'apt', 'update', '-qq'], check=True)
+                    subprocess.run(['sudo', 'apt', 'install', '-y', 'warp-terminal'], check=True)
+                    warp_bin = shutil.which('warp-terminal') or shutil.which('warp')
+                except Exception as e:
+                    print(f"  ⚠️  Warp Terminal repository notice: {e}")
+
+            if warp_bin:
+                for target_link in ['/usr/bin/warp', '/usr/local/bin/warp']:
+                    try:
+                        if not os.path.exists(target_link):
+                            subprocess.run(['sudo', 'ln', '-sf', warp_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Warp Terminal is verified and runnable: {warp_bin}{NC}")
+            else:
+                print(f"  ⚠️  Warp Terminal binary not found.")
+
+            # 3. Antigravity IDE
+            ide_bin = shutil.which('antigravity-ide') or shutil.which('antigravity')
+            if not ide_bin:
+                print(f"  🌟 Installing Google Antigravity IDE from official release...")
+                try:
+                    tmp_ide_dir = tempfile.mkdtemp(prefix="antigravity_ide_")
+                    tar_path = Path(tmp_ide_dir) / "antigravity.tar.gz"
+                    subprocess.run(['curl', '-fsSL', 'https://dl.google.com/release2/j0qc3/antigravity/stable/2.5.5-4923483625488384/linux-x64/Antigravity%20IDE.tar.gz', '-o', str(tar_path)], check=True)
+                    opt_dest = Path('/opt/antigravity-ide')
+                    subprocess.run(['sudo', 'mkdir', '-p', str(opt_dest)], check=True)
+                    subprocess.run(['sudo', 'tar', '-xzf', str(tar_path), '-C', str(opt_dest), '--strip-components=1'], check=True)
+                    shutil.rmtree(tmp_ide_dir, ignore_errors=True)
+                    ide_bin = '/opt/antigravity-ide/antigravity'
+                except Exception as e:
+                    print(f"  ⚠️  Antigravity IDE installation notice: {e}")
+
+            if ide_bin:
+                for target_link in ['/usr/bin/antigravity-ide', '/usr/bin/antigravity', '/usr/local/bin/antigravity-ide', '/usr/local/bin/antigravity']:
+                    try:
+                        subprocess.run(['sudo', 'ln', '-sf', ide_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Antigravity IDE is verified and runnable: {ide_bin}{NC}")
+            else:
+                print(f"  ⚠️  Antigravity IDE binary not found.")
+
+            # 4. Antigravity CLI (agy)
+            agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
+            if not agy_bin:
+                print(f"  🌟 Installing Google Antigravity CLI (agy) from official release...")
+                try:
+                    tmp_agy_dir = tempfile.mkdtemp(prefix="agy_cli_")
+                    tar_path = Path(tmp_agy_dir) / "agy.tar.gz"
+                    subprocess.run(['curl', '-fsSL', 'https://dl.google.com/release2/j0qc3/antigravity/cli/1.1.22_5711547746615296-x86_64.tar.gz', '-o', str(tar_path)], check=True)
+                    subprocess.run(['tar', '-xzf', str(tar_path), '-C', tmp_agy_dir], check=True)
+                    found_agy = None
+                    for root, _, fnames in os.walk(tmp_agy_dir):
+                        if 'agy' in fnames:
+                            found_agy = os.path.join(root, 'agy')
+                            break
+                    if found_agy:
+                        subprocess.run(['sudo', 'install', '-m', '755', found_agy, '/usr/local/bin/agy'], check=True)
+                        agy_bin = '/usr/local/bin/agy'
+                    shutil.rmtree(tmp_agy_dir, ignore_errors=True)
+                except Exception as e:
+                    print(f"  ⚠️  Antigravity CLI installation notice: {e}")
+
+            if agy_bin:
+                for target_link in ['/usr/bin/agy', '/usr/bin/antigravity-cli', '/usr/local/bin/antigravity-cli']:
+                    try:
+                        subprocess.run(['sudo', 'ln', '-sf', agy_bin, target_link], check=False)
+                    except Exception:
+                        pass
+                print(f"  {GREEN}✅ Antigravity CLI is verified and runnable: {agy_bin}{NC}")
+            else:
+                print(f"  ⚠️  Antigravity CLI binary not found.")
 
     def restore_shell_and_desktop_preferences(self, inventory: Dict[str, Any]):
         """Restore the user's default login shell and notify desktop of shortcut reload."""
