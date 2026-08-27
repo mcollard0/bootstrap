@@ -1,0 +1,23 @@
+# Static information about the filesystems.
+# See fstab(5) for details.
+
+# <file system> <dir> <type> <options> <dump> <pass>
+
+# Added by Bootstrap Disaster Recovery
+LABEL=LARGE_ARCHIVE                           /run/media/michael/LARGE_ARCHIVE    auto       noatime,nodiratime,nofail,users,exec,x-systemd.device-timeout=5s,x-systemd.automount 0 0
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /                                  btrfs                             subvol=/@,noatime,compress=zstd,commit=120        0 0 
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /home                              btrfs                             subvol=/@home,noatime,compress=zstd,commit=120    0 0 
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /root                              btrfs                             subvol=/@root,noatime,compress=zstd,commit=120    0 0 
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /srv                               btrfs                             subvol=/@srv,noatime,compress=zstd,commit=120     0 0 
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /var/cache                         btrfs                             subvol=/@cache,noatime,compress=zstd,commit=120   0 0 
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /var/tmp                           btrfs                             subvol=/@tmp,noatime,compress=zstd,commit=120     0 0 
+UUID=22ea6b82-ce52-41f9-88e8-2a356e8df607   /var/log                           btrfs                             subvol=/@log,noatime,compress=zstd,commit=120     0 0 
+UUID=F3F2-0151                              /boot/efi                          vfat                              umask=0077                                        0 2 
+UUID=3dae1666-3f38-4b41-90d5-638b55272195   /boot                              ext4                              noatime,commit=60                                 0 2 
+tmpfs                                       /tmp                               tmpfs                             noatime,mode=1777                                 0 0 
+UUID=740a31a2-2c6f-4cb8-a317-df9ea50cb22a     /run/media/michael/FAST_ARCHIVE     btrfs      noatime,nofail,x-systemd.device-timeout=5s,x-systemd.automount    0 0
+UUID=e12a9625-a572-4d44-8823-f340893ec9de     /run/media/michael/SHARD_9          ext4       noatime,nofail,x-systemd.device-timeout=5s,x-systemd.automount    0 0
+UUID=782898d3-0e9c-4f00-985a-d1c81b0f6f6f     /run/media/michael/SLOW_ARCHIVE     ext4       noatime,nofail,x-systemd.device-timeout=5s,x-systemd.automount    0 0
+UUID=fb58275d-4dc9-4510-b1d3-4a0012891dc0     /run/media/michael/SHARD_3          ext4       noatime,nofail,x-systemd.device-timeout=5s,x-systemd.automount    0 0
+UUID=7bca2e6d-b964-4076-b939-f5788d30de3b     /run/media/michael/SHARD_4          ext4       noatime,nofail,x-systemd.device-timeout=5s,x-systemd.automount    0 0
+UUID=65eecd45-9e4d-487e-bfd4-39c3f5645988   none                               swap                              sw,pri=10                                         0 0 
