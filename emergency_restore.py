@@ -710,7 +710,7 @@ class EmergencyRestorer:
                     if 'paru' in str(aur_helper):
                         flags.extend(['--skipreview', '--noprovides'])
                     elif 'yay' in str(aur_helper):
-                        flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+                        flags.extend(['--answerclean', 'None', '--answerdiff', 'None'])
 
                     cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + missing_aur
                     try:
@@ -742,7 +742,7 @@ class EmergencyRestorer:
                 if 'paru' in str(aur_helper):
                     c_flags.extend(['--skipreview', '--noprovides'])
                 elif 'yay' in str(aur_helper):
-                    c_flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+                    c_flags.extend(['--answerclean', 'None', '--answerdiff', 'None'])
                 try:
                     subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S'] + c_flags + ['google-chrome-beta'], input=chr(10)*20, text=True, check=False)
                     chrome_bin = shutil.which('google-chrome-beta') or shutil.which('google-chrome') or shutil.which('chrome')
@@ -801,7 +801,7 @@ class EmergencyRestorer:
                 if 'paru' in str(aur_helper):
                     c_flags.extend(['--skipreview', '--noprovides'])
                 elif 'yay' in str(aur_helper):
-                    c_flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+                    c_flags.extend(['--answerclean', 'None', '--answerdiff', 'None'])
                 try:
                     subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S'] + c_flags + ['antigravity-ide'], input=chr(10)*20, text=True, check=False)
                     ide_bin = shutil.which('antigravity-ide') or shutil.which('antigravity')
@@ -839,7 +839,7 @@ class EmergencyRestorer:
                 if 'paru' in str(aur_helper):
                     c_flags.extend(['--skipreview', '--noprovides'])
                 elif 'yay' in str(aur_helper):
-                    c_flags.extend(['--nodiffmenu', '--nocleanmenu', '--answerclean', 'None', '--answerdiff', 'None'])
+                    c_flags.extend(['--answerclean', 'None', '--answerdiff', 'None'])
                 try:
                     subprocess.run(['sudo', '-u', self.target_user, aur_helper, '-S'] + c_flags + ['antigravity-cli'], input=chr(10)*20, text=True, check=False)
                     agy_bin = shutil.which('agy') or shutil.which('antigravity-cli')
@@ -884,8 +884,10 @@ class EmergencyRestorer:
         print(f"\n🐚 Restoring User Shell & Desktop Preferences...")
 
         # 1. Shell restoration
-        shell_info = inventory.get('shells', {})
+        shell_info = inventory.get('system_info', {}).get('shells', {}) or inventory.get('shells', {})
         target_shell_bin = shell_info.get('current') or shell_info.get('default_name')
+        if not target_shell_bin and 'fish' in inventory.get('shells', {}):
+            target_shell_bin = 'fish'
         if target_shell_bin:
             resolved_shell = (
                 shutil.which(target_shell_bin) or 
