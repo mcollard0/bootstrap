@@ -102,3 +102,10 @@ if which update-alternatives >/dev/null 2>&1; then
 fi
 
 echo "✅ Terminal configuration complete! '$TARGET_TERM' is now bound to Ctrl+Alt+T."
+echo ""
+echo -e "\033[1;33m🔔 Post-Configuration Note:\033[0m"
+echo "  Some changes (such as keyboard shortcuts like Ctrl+Alt+T) require a session reload to take effect."
+echo "  👉 Restart your display manager (or log out and back in):"
+echo -e "     \033[0;36msudo systemctl restart display-manager\033[0m"
+echo "  👉 Restart your terminal or reload your shell for environment variables to take effect:"
+echo -e "     \033[0;36mexec fish\033[0m  (or open a new terminal window)"

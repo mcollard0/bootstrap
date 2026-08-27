@@ -840,11 +840,15 @@ class EmergencyRestorer:
                 self.restore_shell_and_desktop_preferences(inventory)
             elif choice.lower() == 'q':
                 print("Restoration cancelled.")
-                return
-
             print(f"\n{GREEN}🎉 Emergency restoration completed successfully!{NC}")
-
-        finally:
+            print(f"\n{BOLD}{YELLOW}🔔 Post-Restoration Actions & Reminders:{NC}")
+            print(f"  {BOLD}1. Desktop Keyboard Shortcuts (Ctrl+Alt+T):{NC}")
+            print(f"     In KDE Plasma / Wayland, hotkey mappings require a session restart to take effect.")
+            print(f"     👉 Restart your display manager (or log out and log back in):")
+            print(f"        {CYAN}sudo systemctl restart display-manager{NC}")
+            print(f"  {BOLD}2. Terminal & Shell Environment:{NC}")
+            print(f"     👉 Restart your terminal window or reload your shell for environment variables to take effect:")
+            print(f"        {CYAN}exec fish{NC}  (or open a new terminal window)\n")
             shutil.rmtree(stage_dir, ignore_errors=True)
 
 
