@@ -97,15 +97,16 @@ In Linux shells (Bash, Zsh, Fish), certain characters are interpreted as syntact
 
 ---
 
-## 8. Default Shell & Desktop Shortcut (Ctrl+Alt+T) Synchronization
+## 8. Default Login Shell & KDE Plasma Shortcut (`Ctrl+Alt+T`) Synchronization
 
-- **The Danger**:
-  - Restoring shell configuration directories (e.g. `~/.config/fish/`) does not automatically change the user's default login shell in `/etc/passwd`. Freshly created users or rescue accounts default to `/bin/bash`, resulting in a mismatch where the user's shell prompt and functions are not loaded upon login.
-  - In desktop environments like KDE Plasma 6, shortcuts and default applications are split across `~/.config/kdeglobals` (`TerminalApplication`) and `~/.config/kglobalshortcutsrc` (`[services][<app>.desktop] _launch=Ctrl+Alt+T`).
-  - Restoring these config files on disk while KDE is active does not notify the in-memory daemon (`kglobalaccel`). Without an explicit DBus reload signal, Plasma continues using old shortcut mappings until logout.
+- **Login Shell**: Controlled by field 7 of `/etc/passwd`. Restoring dotfiles alone does not change the user's login shell from `/bin/bash` to `/usr/bin/fish`. The recovery system must explicitly call `usermod -s <shell> <user>` and verify the shell is in `/etc/shells`.
+- **KDE Plasma 6 Shortcut Storage**: Global launch shortcuts are stored in `~/.config/kglobalshortcutsrc` under `[services][<desktop_file>]` with `_launch=Ctrl+Alt+T`, and default terminal is set in `~/.config/kdeglobals`.
+- **In-Memory Caching & Session Lifecycle**: In KDE Plasma 6 Wayland, `kwin_wayland` reads and caches shortcut bindings at session initialization. Modifying `kglobalshortcutsrc` on disk while Plasma is already running will not take effect for global keypresses (`Ctrl+Alt+T`) until the user logs out and logs back in (or restarts `display-manager`), as `kwin_wayland` does not dynamically reload unregistered service definitions.
+
+### 9. Package Restoration & Arch Linux Partial Upgrade Prevention
+- **Restoration Scopes**: Scope 2 (`emergency_restore.py -s 2`) explicitly restores configurations, credentials, mounts, and fonts, but skips packages to complete in under 5 seconds. To restore software packages like `btop`, Scope 5 (`Install Missing Software Packages only`) or Scope 1 (`Full Restoration`) must be invoked.
+- **Partial Upgrades with `pacman -Sy` vs `pacman -Syu`**: Refreshing package databases without updating existing packages (`pacman -Sy`) can lead to dependency conflicts when newly installed packages pull updated shared libraries that break tightly pinned dependencies on the base image (e.g. `gstreamer`, `poppler-qt6`). Automated package installers should upgrade companion libraries or run full system upgrades to prevent transaction aborts.
 - **The Solution**:
   - **Automated Shell Synchronization**: `emergency_restore.py` checks `inventory.json`'s `shells.current` (e.g. `/bin/fish`), ensures it exists in `/etc/shells`, and invokes `usermod -s <shell> <user>`.
   - **Live Shortcut Reloading**: After restoring dotfiles, `emergency_restore.py` sends `org.kde.KGlobalAccel.reloadConfig` over the user session DBus (`/run/user/<uid>/bus`) so hotkeys take effect immediately.
   - **Dedicated Switcher Utilities**: Added [`scripts/set_default_shell.sh`](file:///run/media/michael/FAST_ARCHIVE/Programming/bootstrap/scripts/set_default_shell.sh) and [`scripts/set_default_terminal.sh`](file:///run/media/michael/FAST_ARCHIVE/Programming/bootstrap/scripts/set_default_terminal.sh) to quickly switch and verify preferred shells and terminals (`warp`, `alacritty`, `konsole`, `kitty`).
-
-
