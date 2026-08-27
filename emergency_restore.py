@@ -898,7 +898,7 @@ class EmergencyRestorer:
                 pkg_name = Path(target_shell_bin).name
                 if shutil.which('pacman'):
                     print(f"  📦 Installing user preferred shell '{pkg_name}' via pacman...")
-                    subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', pkg_name], check=False)
+                    subprocess.run(['sudo', 'pacman', '-Sy', '--needed', '--noconfirm', pkg_name], check=False)
                 elif shutil.which('apt'):
                     subprocess.run(['sudo', 'apt', 'install', '-y', pkg_name], check=False)
                 resolved_shell = (
