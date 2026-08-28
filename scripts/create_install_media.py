@@ -662,6 +662,59 @@ HOW TO RESTORE YOUR SYSTEM:
             subprocess.run(["umount", mnt_dir], check=False)
 
 
+def run_pre_provisioning_backup(skip_backup: bool = False):
+    """
+    Scans the system, generates a fresh encrypted vault, updates restoration scripts,
+    and commits/pushes the encrypted vault to git before provisioning media.
+    """
+    if skip_backup:
+        log_info("Skipping pre-provisioning backup scan (--skip-backup requested).")
+        return
+
+    print(f"\n{BOLD}🔄 Step 0: Pre-provisioning System Scan, Vault Packaging & Git Sync...{NC}")
+
+    # Determine vault.env location (check SUDO_USER if running as root)
+    vault_env_paths = [
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bootstrap" / "vault.env",
+    ]
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        vault_env_paths.append(Path(f"/home/{sudo_user}/.config/bootstrap/vault.env"))
+
+    env = os.environ.copy()
+    if "BOOTSTRAP_PASSWORD" not in env:
+        for v_path in vault_env_paths:
+            if v_path.exists():
+                log_info(f"Sourcing vault credentials from {v_path}")
+                try:
+                    for line in v_path.read_text().splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            env[k.strip()] = v.strip().strip("'\"")
+                    break
+                except Exception as e:
+                    log_warn(f"Could not read {v_path}: {e}")
+
+    backup_script = REPO_ROOT / "scripts" / "run_backup.sh"
+    if backup_script.exists():
+        if sudo_user:
+            cmd = ["sudo", "-u", sudo_user, "bash", str(backup_script)]
+        else:
+            cmd = ["bash", str(backup_script)]
+
+        try:
+            res = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env, check=False)
+            if res.returncode == 0:
+                log_success("Pre-provisioning system backup & git sync completed successfully!")
+            else:
+                log_warn(f"Backup script exited with code {res.returncode}. Continuing with media creation...")
+        except Exception as e:
+            log_warn(f"Pre-provisioning backup encountered an issue: {e}. Continuing with existing vaults...")
+    else:
+        log_warn("scripts/run_backup.sh not found. Skipping backup step.")
+
+
 # ------------------------------------------------------------------------------
 # 6. CLI Entrypoint
 # ------------------------------------------------------------------------------
@@ -674,6 +727,7 @@ def main():
     parser.add_argument("--confirm", "--yes", "-y", action="store_true", help="Bypass interactive 'YES' confirmation prompt")
     parser.add_argument("--dry-run", action="store_true", help="Simulate drive detection & online queries without writing")
     parser.add_argument("--force-download", action="store_true", help="Force re-download even if ISO is cached")
+    parser.add_argument("--skip-backup", action="store_true", help="Skip pre-provisioning system inventory scan & git sync")
     args, unknown = parser.parse_known_args()
 
     # Handle loose 'confirm' passed as a positional argument
@@ -779,6 +833,9 @@ def main():
             sys.exit(0)
     else:
         print(f"\n{BOLD}{YELLOW}⚡ Bypass confirmation active (--confirm/confirm passed). Proceeding with target {target_dev}...{NC}\n")
+
+    # Step 0: Pre-provisioning fresh system scan, vault packaging, and git sync
+    run_pre_provisioning_backup(skip_backup=args.skip_backup)
 
     # Flash and partition
     bootstrap_part = flash_and_partition(iso_path, target_dev)
