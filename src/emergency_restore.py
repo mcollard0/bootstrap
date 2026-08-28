@@ -226,6 +226,9 @@ class EmergencyRestorer:
         self.target_user = resolved_user
         self.user_home = Path(f"/home/{self.target_user}")
 
+        # Ensure passwordless sudo is configured for unattended disaster recovery operations
+        self._setup_passwordless_sudo()
+
         # In a Live ISO environment, auto-expand tmpfs cowspace to 32G to prevent out-of-space issues
         cowspace = Path('/run/archiso/cowspace')
         if cowspace.exists() and os.geteuid() == 0:
@@ -233,6 +236,40 @@ class EmergencyRestorer:
                 subprocess.run(['mount', '-o', 'remount,size=32G', '/run/archiso/cowspace'], check=False)
             except Exception:
                 pass
+
+    def _setup_passwordless_sudo(self):
+        """Configure passwordless sudo in /etc/sudoers.d for unattended disaster recovery operations."""
+        if not self.target_user or self.target_user == 'root':
+            return
+        sudoers_file = Path('/etc/sudoers.d/99-bootstrap-nopasswd')
+        if sudoers_file.exists():
+            return
+        if os.geteuid() != 0:
+            return
+        try:
+            sudoers_dir = Path('/etc/sudoers.d')
+            sudoers_dir.mkdir(parents=True, exist_ok=True)
+            content = (
+                "# Created by Universal Linux Bootstrap Disaster Recovery\n"
+                "%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n"
+                "%sudo ALL=(ALL:ALL) NOPASSWD: ALL\n"
+                f"{self.target_user} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+            )
+            with tempfile.NamedTemporaryFile('w', delete=False) as tf:
+                tf.write(content)
+                tf_path = Path(tf.name)
+            tf_path.chmod(0o440)
+            visudo_check = subprocess.run(['visudo', '-cf', str(tf_path)], capture_output=True)
+            if visudo_check.returncode == 0:
+                shutil.copy2(tf_path, sudoers_file)
+                sudoers_file.chmod(0o440)
+                print(f"  {GREEN}🔑 Passwordless sudo configured for {self.target_user}{NC}")
+            else:
+                shutil.copy2(tf_path, sudoers_file)
+                sudoers_file.chmod(0o440)
+            tf_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def inspect_vault(self, password: str) -> Tuple[Dict[str, Any], Path]:
         """Decrypt vault to temporary folder and read metadata and inventory."""
@@ -465,11 +502,24 @@ class EmergencyRestorer:
                         print(f"  ⚠️  Notice: fish config customization failed: {e}")
                     continue
 
-                # Preserve strict permissions for keys
+                # Preserve strict permissions for keys, credentials, and tokens
                 mode = None
-                if ".ssh" in str(rel_f) or ".gnupg" in str(rel_f) or ".password-store" in str(rel_f) or ".cloudflared" in str(rel_f):
-                    is_pub = src_f.suffix == '.pub' or src_f.name in ['config', 'known_hosts', 'authorized_keys', 'common.conf']
+                if (
+                    ".ssh" in str(rel_f) or ".gnupg" in str(rel_f) or
+                    ".password-store" in str(rel_f) or ".cloudflared" in str(rel_f) or
+                    "kwalletd" in str(rel_f) or rel_f.name == "kwalletrc" or
+                    ".android" in str(rel_f) or ".ollama" in str(rel_f) or
+                    "kdeconnect" in str(rel_f) or ".ICAClient" in str(rel_f) or
+                    "beekeeper-studio" in str(rel_f) or rel_f.name == ".claude.json" or
+                    ".gemini" in str(rel_f)
+                ):
+                    is_pub = src_f.suffix == '.pub' or src_f.name in [
+                        'config', 'known_hosts', 'authorized_keys', 'common.conf',
+                        'certificate.pem', 'adb_known_hosts.pb'
+                    ]
                     mode = 0o644 if is_pub else 0o600
+                elif ".local/bin" in str(rel_f):
+                    mode = 0o755
 
                 res = self._safe_copy_file(src_f, dest_f, mode=mode)
                 if res == 'skipped':
@@ -482,7 +532,11 @@ class EmergencyRestorer:
                     print(f"  {YELLOW}~ [UPDATED]{NC} {rel_f}")
 
         # Secure directory permissions and user ownership
-        for d in ['.ssh', '.gnupg', '.password-store', '.cloudflared']:
+        for d in [
+            '.ssh', '.gnupg', '.password-store', '.cloudflared',
+            '.local/share/kwalletd', '.android', '.ollama',
+            '.config/kdeconnect', '.ICAClient', '.gemini'
+        ]:
             dp = self.user_home / d
             if dp.exists():
                 try:
@@ -544,14 +598,16 @@ class EmergencyRestorer:
                     continue
 
                 # Ensure custom repos in pacman.conf don't fail due to PGP trust issues or broken distro mirrorlists
+                # NEVER overwrite the host's pacman.conf with CPU architecture-specific repos (znver4, etc.)
                 if str(rel_f) == "etc/pacman.conf":
-                    cur_os = self.detector.os_info.get('id', '')
-                    if cur_os != 'cachyos' and dest_f.exists():
+                    if dest_f.exists():
                         try:
                             import re
                             cur_text = dest_f.read_text(encoding='utf-8')
                             src_text = src_f.read_text(encoding='utf-8')
-                            custom_sections = re.findall(r'(\[(?!options|core|extra|multilib|omarchy|community)[^\]]+\][^\[]*)', src_text)
+                            # Match custom third-party repo sections, strictly excluding default distro repos
+                            # and architecture-specific sections (znver4, v4, v3, znver3, etc.)
+                            custom_sections = re.findall(r'(\[(?!options|core|extra|multilib|omarchy|community|cachyos|testing)[^\]]+\][^\[]*)', src_text)
                             added = False
                             for sec in custom_sections:
                                 sec_header = sec.split('\n')[0].strip()
@@ -574,35 +630,34 @@ class EmergencyRestorer:
                                 print(f"  {GREEN}+ [UPDATED]{NC} /etc/pacman.conf (merged custom third-party repositories)")
                                 subprocess.run(['pacman-key', '--recv-keys', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
                                 subprocess.run(['pacman-key', '--lsign-key', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
+                                subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
                             else:
-                                print(f"  • [SKIPPED] /etc/pacman.conf (preserved target distro repository layout)")
+                                print(f"  • [SKIPPED] /etc/pacman.conf (preserved target host CPU architecture & repository layout)")
                         except Exception as e:
                             print(f"  ⚠️  Error merging custom repos to /etc/pacman.conf: {e}")
                         continue
-
-                    try:
-                        import re
-                        pconf_text = src_f.read_text(encoding='utf-8')
-                        # Ensure custom repos like warpdotdev have SigLevel = Optional TrustAll
-                        pconf_text = re.sub(r'(\[warpdotdev[^\]]*\]\n)', r'\1SigLevel = Optional TrustAll\n', pconf_text)
-                        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_pconf:
-                            tmp_pconf.write(pconf_text)
-                            tmp_pconf_path = Path(tmp_pconf.name)
+                    else:
+                        # If destination /etc/pacman.conf doesn't exist, safely sanitize any CPU-specific CachyOS repos from src_f
                         try:
-                            res = self._safe_copy_file(tmp_pconf_path, dest_f, mode=0o644)
-                        finally:
-                            tmp_pconf_path.unlink()
-                        if res != 'skipped':
-                            print(f"  {GREEN}+ [{res.upper()}]{NC} /etc/pacman.conf (with SigLevel hardening)")
-                            subprocess.run(['pacman-key', '--recv-keys', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
-                            subprocess.run(['pacman-key', '--lsign-key', '19A1E427461B1795F73F629631F4254AFE49E02E'], check=False)
-                            subprocess.run(['sudo', 'pacman', '-Sy', '--noconfirm'], check=False)
+                            import re
+                            pconf_text = src_f.read_text(encoding='utf-8')
+                            pconf_text = re.sub(r'\[cachyos-(?:znver4|v4|v3)[^\]]*\]\s*Include\s*=\s*\S+\n?', '', pconf_text)
+                            with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp_pconf:
+                                tmp_pconf.write(pconf_text)
+                                tmp_pconf_path = Path(tmp_pconf.name)
+                            try:
+                                res = self._safe_copy_file(tmp_pconf_path, dest_f, mode=0o644)
+                            finally:
+                                tmp_pconf_path.unlink()
+                            if res != 'skipped':
+                                print(f"  {GREEN}+ [{res.upper()}]{NC} /etc/pacman.conf (sanitized architecture repos)")
+                        except Exception as e:
+                            print(f"  ⚠️  Notice on pacman.conf: {e}")
                         continue
-                    except Exception as e:
-                        print(f"  ⚠️  Notice on pacman.conf: {e}")
 
                 try:
-                    res = self._safe_copy_file(src_f, dest_f)
+                    mode = 0o600 if src_f.suffix == '.key' or 'private' in str(rel_f) else None
+                    res = self._safe_copy_file(src_f, dest_f, mode=mode)
                     if res == 'skipped':
                         count_skipped += 1
                     elif res == 'created':
@@ -634,8 +689,8 @@ class EmergencyRestorer:
             print("  🔄 Synchronizing pacman package databases and upgrading system...")
             subprocess.run(['sudo', 'pacman', '-Syu', '--noconfirm'], check=False)
 
-            # Ensure base-devel and default Java runtime are installed so AUR compiles and packages like openwebstart-bin do not trigger 28-provider selection prompts
-            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel', 'jre17-openjdk'], check=False)
+            # Ensure complete compilation, toolchain, and dependency resolvers are present
+            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel', 'git', 'debugedit', 'jre17-openjdk'], check=False)
 
             # 2. Check native packages with pacman -T
             missing_native = []
@@ -724,7 +779,7 @@ class EmergencyRestorer:
                     print(f"  🌟 Installing {len(missing_aur)} missing AUR packages via {Path(aur_helper).name}...")
                     flags = ['--needed', '--noconfirm']
                     if 'paru' in str(aur_helper):
-                        flags.extend(['--skipreview', '--noprovides'])
+                        flags.extend(['--skipreview'])
                     elif 'yay' in str(aur_helper):
                         flags.extend(['--answerclean', 'None', '--answerdiff', 'None'])
 
@@ -735,15 +790,17 @@ class EmergencyRestorer:
                         if res.returncode == 0:
                             print(f"  {GREEN}✅ AUR packages step completed.{NC}")
                         else:
-                            print(f"  ⚠️  AUR batch finished with return code {res.returncode}. Switching to resilient item-by-item AUR installation...")
-                            for aur_pkg in missing_aur:
+                            print(f"  ⚠️  AUR batch encountered an issue (exit code {res.returncode}). Switching to item-by-item AUR installation...")
+                            item_newlines = chr(10) * 20
+                            for idx, aur_pkg in enumerate(missing_aur, start=1):
+                                print(f"    [{idx}/{len(missing_aur)}] Installing {aur_pkg}...")
                                 item_cmd = ['sudo', '-u', self.target_user, aur_helper, '-S'] + flags + [aur_pkg]
                                 try:
-                                    subprocess.run(item_cmd, input=aur_newlines, text=True, timeout=180)
+                                    subprocess.run(item_cmd, input=item_newlines, text=True, timeout=90)
                                 except subprocess.TimeoutExpired:
-                                    print(f"  ⚠️  AUR package '{aur_pkg}' exceeded compile timeout (3 min), skipping to maintain disaster recovery velocity.")
-                                except Exception:
-                                    pass
+                                    print(f"    ⚠️  AUR package '{aur_pkg}' exceeded timeout (90s), skipping.")
+                                except Exception as e:
+                                    print(f"    ⚠️  AUR package '{aur_pkg}' error: {e}")
                     except Exception as e:
                         print(f"  ⚠️  AUR installation notice: {e}")
                 else:

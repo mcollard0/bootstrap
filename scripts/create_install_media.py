@@ -595,6 +595,7 @@ def stage_recovery_payload(bootstrap_part: str, distro_name: str):
                 log_info(f"Staging latest encrypted backup vault: {latest_vault.name}")
                 shutil.copy2(latest_vault, os.path.join(mnt_dir, "backups", latest_vault.name))
                 shutil.copy2(latest_vault, os.path.join(mnt_dir, "backups", "bootstrap_vault_latest.tar.enc"))
+                shutil.copy2(latest_vault, os.path.join(mnt_dir, "data", "bootstrap_vault_latest.tar.enc"))
                 log_success(f"Vault copied to {bootstrap_part}:/backups/{latest_vault.name}")
             else:
                 log_warn("No local encrypted backup vault found. Recovery will fall back to cloud/local search.")

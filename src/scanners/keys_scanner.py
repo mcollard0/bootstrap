@@ -6,11 +6,19 @@ Scans and prepares security credentials for encrypted vault packaging:
 - SSH keys, public keys, configs, authorized_keys, known_hosts (`~/.ssh/`)
 - GPG private and public keys, revocation certs, keyrings (`~/.gnupg/`)
 - Password Manager repository (`~/.password-store/`)
+- KDE Wallet keyrings, salts, and configs (`~/.local/share/kwalletd/`, `~/.config/kwalletrc`)
+- KDE Connect device identity & TLS certificates (`~/.config/kdeconnect/`)
+- Android ADB authorization keys & debug keystore (`~/.android/`)
+- Ollama node identity key & configs (`~/.ollama/`)
+- Claude CLI credentials & project configurations (`~/.claude.json`)
+- Gemini & Antigravity credentials & MCP configurations (`~/.gemini/`)
+- Citrix Workspace client connection profiles (`~/.ICAClient/`)
+- Beekeeper Studio database connection profiles & encryption key (`~/.config/beekeeper-studio/`)
 - Cloudflare tunnel credentials and certificates (`~/.cloudflared/`)
 - GitHub CLI authentication and configs (`~/.config/gh/`)
 - Docker authentication and daemon configs (`~/.docker/config.json`, `daemon.json`)
 - Git user config (`~/.gitconfig`)
-- SSL private keys and certificates (`/etc/ssl/private/`)
+- SSL private keys and certificates (`/etc/ssl/private/`, `/etc/nginx/ssl/`)
 """
 
 import os
@@ -26,6 +34,14 @@ class KeysScanner(BaseScanner):
         ssh_items = self._scan_ssh()
         gpg_items = self._scan_gpg()
         pass_store = self._scan_pass_store()
+        kwallet_items = self._scan_kwallet()
+        kdeconnect_items = self._scan_kdeconnect()
+        android_items = self._scan_android()
+        ollama_items = self._scan_ollama()
+        claude_items = self._scan_claude()
+        gemini_items = self._scan_gemini()
+        ica_items = self._scan_ica_client()
+        beekeeper_items = self._scan_beekeeper()
         cloudflared_items = self._scan_cloudflared()
         git_items = self._scan_git()
         ssl_items = self._scan_ssl()
@@ -34,6 +50,14 @@ class KeysScanner(BaseScanner):
             'ssh_keys': ssh_items,
             'gpg': gpg_items,
             'password_store': pass_store,
+            'kwallet': kwallet_items,
+            'kdeconnect': kdeconnect_items,
+            'android': android_items,
+            'ollama': ollama_items,
+            'claude': claude_items,
+            'gemini': gemini_items,
+            'ica_client': ica_items,
+            'beekeeper': beekeeper_items,
             'cloudflared': cloudflared_items,
             'git': git_items,
             'ssl_private_keys': ssl_items
@@ -89,6 +113,100 @@ class KeysScanner(BaseScanner):
             'entry_count': len(gpg_files)
         }
 
+    def _scan_kwallet(self) -> Dict[str, Any]:
+        """Scan KDE Wallet keyrings, salts, and configuration."""
+        kwallet_dir = self.user_home / '.local/share/kwalletd'
+        kwalletrc = self.user_home / '.config/kwalletrc'
+        wallets = []
+        if kwallet_dir.exists():
+            for f in kwallet_dir.iterdir():
+                if f.is_file() and not f.name.endswith('~'):
+                    wallets.append({
+                        'name': f.name,
+                        'size': f.stat().st_size
+                    })
+        return {
+            'exists': bool(wallets or kwalletrc.exists()),
+            'wallet_files_count': len(wallets),
+            'files': wallets,
+            'has_config': kwalletrc.exists()
+        }
+
+    def _scan_kdeconnect(self) -> Dict[str, Any]:
+        """Scan KDE Connect device certificates and configuration."""
+        kc_dir = self.user_home / '.config/kdeconnect'
+        if not kc_dir.exists():
+            return {'exists': False}
+        return {
+            'exists': True,
+            'has_private_key': (kc_dir / 'privateKey.pem').exists(),
+            'has_certificate': (kc_dir / 'certificate.pem').exists(),
+            'has_trusted_devices': (kc_dir / 'trusted_devices').exists()
+        }
+
+    def _scan_android(self) -> Dict[str, Any]:
+        """Scan Android adb keys and debug keystore."""
+        adb_dir = self.user_home / '.android'
+        if not adb_dir.exists():
+            return {'exists': False}
+        return {
+            'exists': True,
+            'has_adbkey': (adb_dir / 'adbkey').exists(),
+            'has_debug_keystore': (adb_dir / 'debug.keystore').exists()
+        }
+
+    def _scan_ollama(self) -> Dict[str, Any]:
+        """Scan Ollama identity key."""
+        ollama_dir = self.user_home / '.ollama'
+        if not ollama_dir.exists():
+            return {'exists': False}
+        return {
+            'exists': True,
+            'has_key': (ollama_dir / 'id_ed25519').exists(),
+            'has_config': (ollama_dir / 'config.json').exists()
+        }
+
+    def _scan_claude(self) -> Dict[str, Any]:
+        """Scan Claude CLI configuration."""
+        claude_file = self.user_home / '.claude.json'
+        return {
+            'exists': claude_file.exists(),
+            'size': claude_file.stat().st_size if claude_file.exists() else 0
+        }
+
+    def _scan_gemini(self) -> Dict[str, Any]:
+        """Scan Gemini / Antigravity developer credentials."""
+        gemini_dir = self.user_home / '.gemini'
+        if not gemini_dir.exists():
+            return {'exists': False}
+        return {
+            'exists': True,
+            'has_oauth': (gemini_dir / 'oauth_creds.json').exists(),
+            'has_mcp_config': (gemini_dir / 'config/mcp_config.json').exists()
+        }
+
+    def _scan_ica_client(self) -> Dict[str, Any]:
+        """Scan Citrix ICA client configuration."""
+        ica_dir = self.user_home / '.ICAClient'
+        if not ica_dir.exists():
+            return {'exists': False}
+        ini_files = [f.name for f in ica_dir.glob('*.ini')]
+        return {
+            'exists': True,
+            'ini_files_count': len(ini_files)
+        }
+
+    def _scan_beekeeper(self) -> Dict[str, Any]:
+        """Scan Beekeeper Studio database profiles."""
+        bk_dir = self.user_home / '.config/beekeeper-studio'
+        if not bk_dir.exists():
+            return {'exists': False}
+        return {
+            'exists': True,
+            'has_app_db': (bk_dir / 'app.db').exists(),
+            'has_key': (bk_dir / '.key').exists()
+        }
+
     def _scan_cloudflared(self) -> Dict[str, Any]:
         """Scan ~/.cloudflared tunnels and certificates."""
         cf_dir = self.user_home / '.cloudflared'
@@ -112,19 +230,20 @@ class KeysScanner(BaseScanner):
         }
 
     def _scan_ssl(self) -> List[Dict[str, str]]:
-        """Scan SSL keys in /etc/ssl/private."""
-        ssl_dir = Path('/etc/ssl/private')
+        """Scan SSL keys in /etc/ssl/private and /etc/nginx/ssl."""
         keys = []
-        if ssl_dir.exists():
-            try:
-                for f in ssl_dir.glob('*.key'):
-                    if 'snakeoil' not in f.name:
-                        keys.append({
-                            'name': f.name,
-                            'path': str(f)
-                        })
-            except Exception:
-                pass
+        ssl_dirs = [Path('/etc/ssl/private'), Path('/etc/nginx/ssl')]
+        for sdir in ssl_dirs:
+            if sdir.exists():
+                try:
+                    for f in sdir.glob('*.key'):
+                        if 'snakeoil' not in f.name and '.backup' not in f.name:
+                            keys.append({
+                                'name': f.name,
+                                'path': str(f)
+                            })
+                except Exception:
+                    pass
         return keys
 
     def get_collectible_files(self) -> Dict[str, Path]:
@@ -185,7 +304,7 @@ class KeysScanner(BaseScanner):
         if gitconfig.exists():
             collectible["home/.gitconfig"] = gitconfig
 
-        # 8. SSL keys if accessible
+        # 8. SSL keys and certificates if accessible
         ssl_dir = Path('/etc/ssl/private')
         if ssl_dir.exists():
             try:
@@ -194,5 +313,84 @@ class KeysScanner(BaseScanner):
                         collectible[f"system/etc/ssl/private/{f.name}"] = f
             except Exception:
                 pass
+
+        nginx_ssl = Path('/etc/nginx/ssl')
+        if nginx_ssl.exists():
+            try:
+                for f in nginx_ssl.iterdir():
+                    if f.is_file() and (f.suffix in ['.key', '.crt', '.pem']) and '.backup' not in f.name:
+                        collectible[f"system/etc/nginx/ssl/{f.name}"] = f
+            except Exception:
+                pass
+
+        # 9. KDE Wallet keyrings and daemon configuration
+        kwallet_dir = self.user_home / '.local/share/kwalletd'
+        if kwallet_dir.exists():
+            for f in kwallet_dir.iterdir():
+                if f.is_file() and not f.name.endswith('~'):
+                    collectible[f"home/.local/share/kwalletd/{f.name}"] = f
+
+        kwalletrc = self.user_home / '.config/kwalletrc'
+        if kwalletrc.exists() and kwalletrc.is_file():
+            collectible["home/.config/kwalletrc"] = kwalletrc
+
+        # 10. KDE Connect device certificates and pairing info
+        kc_dir = self.user_home / '.config/kdeconnect'
+        if kc_dir.exists():
+            for kcf in ['privateKey.pem', 'certificate.pem', 'config', 'trusted_devices']:
+                p = kc_dir / kcf
+                if p.exists() and p.is_file():
+                    collectible[f"home/.config/kdeconnect/{kcf}"] = p
+
+        # 11. Android ADB authorization keys and debug keystore
+        adb_dir = self.user_home / '.android'
+        if adb_dir.exists():
+            for adbf in ['adbkey', 'adbkey.pub', 'debug.keystore', 'adb_known_hosts.pb']:
+                p = adb_dir / adbf
+                if p.exists() and p.is_file():
+                    collectible[f"home/.android/{adbf}"] = p
+
+        # 12. Ollama node identity key and configuration
+        ollama_dir = self.user_home / '.ollama'
+        if ollama_dir.exists():
+            for of in ['id_ed25519', 'id_ed25519.pub', 'config.json']:
+                p = ollama_dir / of
+                if p.exists() and p.is_file():
+                    collectible[f"home/.ollama/{of}"] = p
+
+        # 13. Claude CLI credentials and settings
+        claude_file = self.user_home / '.claude.json'
+        if claude_file.exists() and claude_file.is_file():
+            collectible["home/.claude.json"] = claude_file
+
+        # 14. Gemini / Antigravity credentials and MCP server configurations
+        gemini_dir = self.user_home / '.gemini'
+        if gemini_dir.exists():
+            for gf in ['oauth_creds.json', 'settings.json', 'google_accounts.json', 'installation_id', 'state.json']:
+                p = gemini_dir / gf
+                if p.exists() and p.is_file():
+                    collectible[f"home/.gemini/{gf}"] = p
+            g_cfg = gemini_dir / 'config'
+            if g_cfg.exists():
+                for root, _, files in os.walk(g_cfg):
+                    for f in files:
+                        rp = Path(root) / f
+                        rel_g = rp.relative_to(gemini_dir)
+                        collectible[f"home/.gemini/{rel_g}"] = rp
+
+        # 15. Citrix Workspace client configurations
+        ica_dir = self.user_home / '.ICAClient'
+        if ica_dir.exists():
+            for ica_f in ica_dir.iterdir():
+                if ica_f.is_file() and (ica_f.suffix == '.ini' or ica_f.name in ['config', 'LastConnectedGateway', '.eula_accepted']):
+                    collectible[f"home/.ICAClient/{ica_f.name}"] = ica_f
+
+        # 16. Beekeeper Studio connection profiles and key
+        bk_dir = self.user_home / '.config/beekeeper-studio'
+        if bk_dir.exists():
+            for bk_f in ['app.db', '.key', 'Preferences']:
+                p = bk_dir / bk_f
+                if p.exists() and p.is_file():
+                    collectible[f"home/.config/beekeeper-studio/{bk_f}"] = p
 
         return collectible

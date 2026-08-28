@@ -2,11 +2,16 @@
 """
 Storage & Filesystem Scanner
 
-Scans storage topology critical for disaster recovery:
+Scans storage topology and critical system configs for disaster recovery:
 - `/etc/fstab` and `/etc/crypttab`
 - Block device UUIDs, labels, filesystems (`lsblk -f -J` / `blkid`)
 - Archive mounts (`FAST_ARCHIVE`, `LARGE_ARCHIVE`, `SHARD_*`)
 - Btrfs subvolume layout
+- Bootloader & kernel configs (`/etc/default/grub`, `/etc/modules-load.d/`)
+- System & server configs (`/etc/docker/daemon.json`, `/etc/sddm.conf`, `/etc/nginx/`)
+- Console, Locale, & Security limits (`/etc/vconsole.conf`, `/etc/locale.conf`, `/etc/security/limits.d/`)
+- Snapper snapshot configurations (`/etc/snapper/configs/`)
+- Arch packaging & initramfs (`/etc/pacman.conf`, `/etc/mkinitcpio.conf`)
 - Console & Locale boot configs (`/etc/vconsole.conf`, `/etc/locale.conf`)
 """
 
@@ -119,9 +124,20 @@ class StorageScanner(BaseScanner):
         return []
 
     def _scan_boot_configs(self) -> Dict[str, str]:
-        """Scan boot & locale configurations."""
+        """Scan boot, kernel, locale, and server system configurations."""
         configs = {}
-        for f in ['/etc/vconsole.conf', '/etc/locale.conf', '/etc/locale.gen', '/etc/mkinitcpio.conf', '/etc/pacman.conf']:
+        target_files = [
+            '/etc/vconsole.conf',
+            '/etc/locale.conf',
+            '/etc/locale.gen',
+            '/etc/mkinitcpio.conf',
+            '/etc/pacman.conf',
+            '/etc/default/grub',
+            '/etc/docker/daemon.json',
+            '/etc/sddm.conf',
+            '/etc/nginx/nginx.conf'
+        ]
+        for f in target_files:
             p = Path(f)
             if p.exists() and p.is_file():
                 try:
@@ -174,10 +190,41 @@ class StorageScanner(BaseScanner):
             '/etc/locale.conf',
             '/etc/locale.gen',
             '/etc/mkinitcpio.conf',
-            '/etc/pacman.conf'
+            '/etc/pacman.conf',
+            '/etc/default/grub',
+            '/etc/docker/daemon.json',
+            '/etc/sddm.conf',
+            '/etc/nginx/nginx.conf'
         ]
         for f in candidate_files:
             p = Path(f)
-            if p.exists():
+            if p.exists() and p.is_file():
                 collectible[f"system{f}"] = p
+
+        # Module autoloading configs
+        mod_load = Path('/etc/modules-load.d')
+        if mod_load.exists():
+            for f in mod_load.glob('*.conf'):
+                collectible[f"system{f}"] = f
+
+        # Security limits (e.g. 20-audio.conf)
+        limits_d = Path('/etc/security/limits.d')
+        if limits_d.exists():
+            for f in limits_d.glob('*.conf'):
+                collectible[f"system{f}"] = f
+
+        # Snapper snapshot configuration
+        snapper_d = Path('/etc/snapper/configs')
+        if snapper_d.exists():
+            for f in snapper_d.iterdir():
+                if f.is_file():
+                    collectible[f"system{f}"] = f
+
+        # Nginx virtual host configurations
+        nginx_sites = Path('/etc/nginx/sites-available')
+        if nginx_sites.exists():
+            for f in nginx_sites.glob('*.conf'):
+                if '.backup' not in f.name:
+                    collectible[f"system/etc/nginx/sites-available/{f.name}"] = f
+
         return collectible

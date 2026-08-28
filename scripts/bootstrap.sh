@@ -39,6 +39,32 @@ main() {
     log_info "User Home:   $USER_HOME"
     echo
 
+    # 0. Ensure passwordless sudo for target user during automated restoration
+    if [[ -n "$TARGET_USER" && "$TARGET_USER" != "root" ]]; then
+        if [[ ! -f /etc/sudoers.d/99-bootstrap-nopasswd ]]; then
+            log_info "🔑 Configuring passwordless sudo for $TARGET_USER..."
+            mkdir -p /etc/sudoers.d
+            local tmp_sudo=$(mktemp)
+            cat <<EOF > "$tmp_sudo"
+# Created by Universal Linux Bootstrap
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+%sudo ALL=(ALL:ALL) NOPASSWD: ALL
+$TARGET_USER ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+            chmod 0440 "$tmp_sudo"
+            if command -v visudo >/dev/null 2>&1; then
+                if visudo -cf "$tmp_sudo" >/dev/null 2>&1; then
+                    cp "$tmp_sudo" /etc/sudoers.d/99-bootstrap-nopasswd
+                    chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
+                fi
+            else
+                cp "$tmp_sudo" /etc/sudoers.d/99-bootstrap-nopasswd
+                chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
+            fi
+            rm -f "$tmp_sudo"
+        fi
+    fi
+
     # 1. Update package databases and install base development tools
     log_info "📦 Synchronizing pacman mirrors and installing base-devel..."
     pacman -Sy --needed --noconfirm base-devel git curl wget

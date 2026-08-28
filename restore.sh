@@ -103,13 +103,44 @@ echo -e "${BOLD}${CYAN}=========================================================
 echo -e "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
 echo -e "${BOLD}${CYAN}======================================================================${NC}"
 
-# 3. Arch/CachyOS Live USB tmpfs overlay expansion
+# 3. Configure passwordless sudo for target user during disaster recovery
+TARGET_USER="${SUDO_USER:-$USER}"
+if [ -n "$TARGET_USER" ] && [ "$TARGET_USER" != "root" ]; then
+    if [ "$EUID" -eq 0 ] || [ -n "$SUDO" ]; then
+        if [ ! -f /etc/sudoers.d/99-bootstrap-nopasswd ]; then
+            echo -e "  ${CYAN}🔑 Configuring passwordless sudo for disaster recovery ($TARGET_USER)...${NC}"
+            $SUDO mkdir -p /etc/sudoers.d
+            TMP_SUDO=$(mktemp)
+            cat <<EOF > "$TMP_SUDO"
+# Created by Universal Linux Bootstrap Disaster Recovery
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+%sudo ALL=(ALL:ALL) NOPASSWD: ALL
+$TARGET_USER ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+            chmod 0440 "$TMP_SUDO"
+            if command -v visudo >/dev/null 2>&1; then
+                if visudo -cf "$TMP_SUDO" >/dev/null 2>&1; then
+                    $SUDO cp "$TMP_SUDO" /etc/sudoers.d/99-bootstrap-nopasswd
+                    $SUDO chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
+                else
+                    echo -e "  ${YELLOW}⚠️  visudo syntax check failed; skipping sudoers modification.${NC}"
+                fi
+            else
+                $SUDO cp "$TMP_SUDO" /etc/sudoers.d/99-bootstrap-nopasswd
+                $SUDO chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
+            fi
+            rm -f "$TMP_SUDO"
+        fi
+    fi
+fi
+
+# 4. Arch/CachyOS Live USB tmpfs overlay expansion
 if [ -d "/run/archiso/cowspace" ] && [ "$EUID" -eq 0 ]; then
     echo -e "  ${YELLOW}⚡ Detected Live ISO environment. Expanding cowspace overlay to 32G...${NC}"
     mount -o remount,size=32G /run/archiso/cowspace 2>/dev/null || true
 fi
 
-# 3. Detect Missing Prerequisites
+# 5. Detect Missing Prerequisites
 NEED_PKGS=()
 NEED_PYTHON=false
 NEED_CRYPTO=false
