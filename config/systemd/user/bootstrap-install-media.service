@@ -1,0 +1,15 @@
+[Unit]
+Description=Universal Linux Bootstrap - Automated USB Install & Recovery Media Provisioning
+Documentation=file:///run/media/michael/FAST_ARCHIVE/Programming/bootstrap/README.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/run/media/michael/FAST_ARCHIVE/Programming/bootstrap
+ExecStart=/usr/bin/sudo /run/media/michael/FAST_ARCHIVE/Programming/bootstrap/create_install_media.sh --distro 1 --dev /dev/sdb --confirm
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=default.target

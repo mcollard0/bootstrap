@@ -1,0 +1,10 @@
+[Unit]
+Description=Universal Linux Bootstrap Install Media Creator Timer (Weekly on Monday at 3:00 AM)
+Requires=bootstrap-install-media.service
+
+[Timer]
+OnCalendar=Mon *-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
