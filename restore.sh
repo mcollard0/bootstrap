@@ -31,18 +31,6 @@ else
     NC=""
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESTORE_PY="$SCRIPT_DIR/src/emergency_restore.py"
-
-if [ ! -f "$RESTORE_PY" ]; then
-    echo -e "${RED}Error: Recovery engine not found at $RESTORE_PY${NC}" >&2
-    exit 1
-fi
-
-echo -e "${BOLD}${CYAN}======================================================================${NC}"
-echo -e "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
-echo -e "${BOLD}${CYAN}======================================================================${NC}"
-
 # 1. Privilege & sudo helper resolution
 if [ "$EUID" -eq 0 ]; then
     SUDO=""
@@ -52,7 +40,70 @@ else
     SUDO=""
 fi
 
-# 2. Arch/CachyOS Live USB tmpfs overlay expansion
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESTORE_PY="$SCRIPT_DIR/src/emergency_restore.py"
+
+# 2. Self-bootstrapping fallback if recovery engine is not found locally
+if [ ! -f "$RESTORE_PY" ]; then
+    echo -e "${YELLOW}⚡ Recovery engine not found at $RESTORE_PY${NC}"
+    echo -e "${CYAN}📥 Standalone mode: Bootstrapping full repository into /tmp/bootstrap...${NC}"
+
+    # Ensure git or curl/tar is available
+    if ! command -v git >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}📦 git is missing. Attempting automatic installation...${NC}"
+        if command -v pacman >/dev/null 2>&1; then
+            $SUDO pacman -Sy --needed --noconfirm git
+        elif command -v apt-get >/dev/null 2>&1; then
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -y
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
+        elif command -v dnf >/dev/null 2>&1; then
+            $SUDO dnf install -y git
+        elif command -v zypper >/dev/null 2>&1; then
+            $SUDO zypper --non-interactive install git
+        elif command -v apk >/dev/null 2>&1; then
+            $SUDO apk add --no-cache git
+        fi
+    fi
+
+    # Clone or pull repo
+    mkdir -p /tmp/bootstrap
+    if command -v git >/dev/null 2>&1; then
+        if [ -d "/tmp/bootstrap/.git" ]; then
+            echo -e "  ${CYAN}🔄 Existing /tmp/bootstrap found; syncing latest changes...${NC}"
+            git -C /tmp/bootstrap pull origin main 2>/dev/null || true
+        else
+            echo -e "  ${CYAN}🚀 Cloning https://github.com/mcollard0/bootstrap.git...${NC}"
+            rm -rf /tmp/bootstrap
+            git clone --depth 1 https://github.com/mcollard0/bootstrap.git /tmp/bootstrap
+        fi
+    elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}⚠️ git unavailable; downloading source tarball via curl...${NC}"
+        rm -rf /tmp/bootstrap
+        mkdir -p /tmp/bootstrap
+        curl -sSL https://github.com/mcollard0/bootstrap/archive/refs/heads/main.tar.gz | tar -xz -C /tmp/bootstrap --strip-components=1
+    else
+        echo -e "${RED}❌ Fatal: Neither git nor curl could download the repository.${NC}" >&2
+        echo -e "   Please install git manually: sudo pacman -S git (or sudo apt install git)" >&2
+        exit 1
+    fi
+
+    if [ -f "/tmp/bootstrap/restore.sh" ]; then
+        echo -e "  ${GREEN}✅ Successfully bootstrapped repository in /tmp/bootstrap.${NC}"
+        echo -e "  ${CYAN}🚀 Transferring execution to /tmp/bootstrap/restore.sh...${NC}\n"
+        cd /tmp/bootstrap
+        chmod +x /tmp/bootstrap/restore.sh
+        exec /tmp/bootstrap/restore.sh "$@"
+    else
+        echo -e "${RED}❌ Fatal: Downloaded repository did not contain restore.sh.${NC}" >&2
+        exit 1
+    fi
+fi
+
+echo -e "${BOLD}${CYAN}======================================================================${NC}"
+echo -e "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
+echo -e "${BOLD}${CYAN}======================================================================${NC}"
+
+# 3. Arch/CachyOS Live USB tmpfs overlay expansion
 if [ -d "/run/archiso/cowspace" ] && [ "$EUID" -eq 0 ]; then
     echo -e "  ${YELLOW}⚡ Detected Live ISO environment. Expanding cowspace overlay to 32G...${NC}"
     mount -o remount,size=32G /run/archiso/cowspace 2>/dev/null || true

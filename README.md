@@ -138,14 +138,34 @@ Add arbitrary files, fonts, or scripts to back up:
 ]
 ```
 
-### 5. Disaster Recovery (Fresh System or Replaced `/` Drive)
+### 5. Create Dual-Volume Bootable USB Install & Recovery Media
+Easily prepare any USB drive (e.g. `/dev/sdb`) with a bootable Linux OS installer and a secondary standalone disaster recovery partition:
 ```bash
-# Step 1: Unpack vault and restore fstab, fish/bash dotfiles, GPG/SSH keys, and configs
-# (restore.sh automatically installs Python 3, cryptography, zstd, and tar if missing)
-sudo ./restore.sh --vault data/bootstrap_vault_*.tar.zst.enc
+# Interactive menu:
+sudo ./create_install_media.sh
 
-# Step 2: Reinstall missing software packages in batch (skips packages already present)
-sudo ./scripts/bootstrap.sh
+# Or automated one-command invocation:
+sudo ./create_install_media.sh --distro 1 --dev /dev/sdb --confirm
+```
+*   **Dynamic Upstream Release Checking**: Never relies on hardcoded versions or dead download links. Automatically queries official upstream feeds (Arch Linux Releng API, CachyOS SourceForge RSS & CDN77, Ubuntu release indices, Debian Netinst indices, and Fedora download gateways) to discover and fetch the latest version.
+*   **Smart Cache Management**: Reuses up-to-date cached images from `/run/media/michael/FAST_ARCHIVE/VM/IMAGES` and alerts if a newer version is available online.
+*   **Hardware Protection**: Strictly blacklists internal NVMe drives and system mounts to prevent accidental overwrites.
+*   **Dual-Volume Architecture**: Volume 1 exposes the Linux OS Installer; Volume 2 (`BOOTSTRAP`) hosts the offline disaster recovery engine, scripts, and the latest encrypted backup vault (`bootstrap_vault_*.tar.enc`).
+
+### 6. Disaster Recovery (Fresh System or Replaced `/` Drive)
+```bash
+# Option A: From the Bootable USB Drive (One-Click)
+# After booting your newly installed OS with the USB drive inserted:
+sudo /run/media/$USER/BOOTSTRAP/emergency_restore.sh
+
+# Option B: Standalone Single-File Download (Self-Bootstrapping)
+# Even if downloaded alone without the repo, it automatically clones bootstrap and restores:
+curl -O https://raw.githubusercontent.com/mcollard0/bootstrap/main/emergency_restore.sh
+chmod +x emergency_restore.sh
+sudo ./emergency_restore.sh
+
+# Option C: Local Vault Unpack
+sudo ./emergency_restore.sh --vault data/bootstrap_vault_*.tar.zst.enc
 ```
 
 ---
