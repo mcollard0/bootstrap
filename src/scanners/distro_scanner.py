@@ -26,6 +26,7 @@ class DistroPackageScanner(BaseScanner):
             'family': os_family,
             'arch_native': [],
             'arch_aur': [],
+            'arch_all': [],
             'apt': [],
             'snap': [],
             'flatpak': [],
@@ -35,6 +36,7 @@ class DistroPackageScanner(BaseScanner):
         if os_family == 'arch':
             packages['arch_native'] = self._scan_pacman_explicit()
             packages['arch_aur'] = self._scan_arch_aur()
+            packages['arch_all'] = self._scan_pacman_all()
         elif os_family == 'debian':
             packages['apt'] = self._scan_apt_packages()
             packages['snap'] = self._scan_snap_packages()
@@ -91,6 +93,30 @@ class DistroPackageScanner(BaseScanner):
                     })
         except Exception as e:
             print(f"    ⚠️  Failed to scan Arch AUR packages: {e}")
+
+        return pkgs
+
+    def _scan_pacman_all(self) -> List[Dict[str, str]]:
+        """Scan all installed packages (explicit + dependencies) to record full system state and providers."""
+        pkgs = []
+        if not shutil.which('pacman'):
+            return pkgs
+
+        try:
+            res = subprocess.run(
+                ['pacman', '-Q'],
+                capture_output=True, text=True, check=True
+            )
+            for line in res.stdout.strip().split('\n'):
+                line = line.strip()
+                if line:
+                    parts = line.split()
+                    pkgs.append({
+                        'name': parts[0],
+                        'version': parts[1] if len(parts) > 1 else 'unknown'
+                    })
+        except Exception as e:
+            print(f"    ⚠️  Failed to scan all pacman packages: {e}")
 
         return pkgs
 

@@ -14,10 +14,14 @@ readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_ts() {
+    date '+[%Y-%m-%d %H:%M:%S]'
+}
+
+log_info() { echo -e "$(log_ts) ${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "$(log_ts) ${GREEN}[SUCCESS]${NC} $1"; }
+log_warning() { echo -e "$(log_ts) ${YELLOW}[WARNING]${NC} $1"; }
+log_error() { echo -e "$(log_ts) ${RED}[ERROR]${NC} $1"; }
 
 check_sudo() {
     if [[ $EUID -ne 0 ]]; then
@@ -65,9 +69,9 @@ EOF
         fi
     fi
 
-    # 1. Update package databases and install base development tools
-    log_info "📦 Synchronizing pacman mirrors and installing base-devel..."
-    pacman -Sy --needed --noconfirm base-devel git curl wget
+    # 1. Update package databases and pre-seed foundation virtual providers
+    log_info "📦 Synchronizing pacman mirrors and pre-seeding foundation providers..."
+    pacman -Sy --needed --noconfirm base-devel git curl wget debugedit jre17-openjdk pipewire-jack wireplumber vulkan-radeon noto-fonts
 
     # 2. Recreate mount points for external archive drives
     log_info "💾 Ensuring archive drive mount directories exist..."

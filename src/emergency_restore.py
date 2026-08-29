@@ -25,6 +25,8 @@ import select
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
+import datetime
+
 # Ensure src/ and repo root are in sys.path
 SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
@@ -146,11 +148,12 @@ def prompt_confirmation_with_countdown(timeout_seconds: int = 900) -> bool:
 
 
 class TeeLogger:
-    """Duplicates all stdout and stderr output to both the interactive terminal and log files."""
+    """Duplicates all stdout and stderr output to both the interactive terminal and log files, ensuring each line starts with a datetime timestamp."""
     def __init__(self, log_paths: List[Path], original_stream):
         self.log_paths = log_paths
         self.original_stream = original_stream
         self.files = []
+        self._at_line_start = True
         for lp in log_paths:
             try:
                 lp.parent.mkdir(parents=True, exist_ok=True)
@@ -158,16 +161,38 @@ class TeeLogger:
             except Exception:
                 pass
 
+    def _format_with_timestamp(self, data: str) -> str:
+        if not data:
+            return ""
+        now_str = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+        lines = data.split('\n')
+        out_chunks = []
+        for i, line in enumerate(lines):
+            if i > 0 or self._at_line_start:
+                if line:
+                    if line.startswith('\r\033[K'):
+                        line = f"\r\033[K{now_str}{line[4:]}"
+                    elif line.startswith('\r'):
+                        line = f"\r{now_str}{line[1:]}"
+                    else:
+                        line = f"{now_str}{line}"
+            out_chunks.append(line)
+        self._at_line_start = data.endswith('\n')
+        return '\n'.join(out_chunks)
+
     def write(self, data):
+        if not data:
+            return
+        formatted = self._format_with_timestamp(data)
         try:
-            self.original_stream.write(data)
+            self.original_stream.write(formatted)
             self.original_stream.flush()
         except Exception:
             pass
         if self.files:
             try:
                 import re
-                clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', data)
+                clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', formatted)
                 for f in self.files:
                     try:
                         f.write(clean)
@@ -202,6 +227,16 @@ class EmergencyRestorer:
         self.vault_path = Path(vault_path).expanduser().resolve()
         if not self.vault_path.exists():
             raise FileNotFoundError(f"Vault file not found: {self.vault_path}")
+
+        # Ensure automatic dual-logging to emergency_restore.log and failure.txt with timestamps
+        if not isinstance(sys.stdout, TeeLogger):
+            log_files = [
+                PROJECT_ROOT / "emergency_restore.log",
+                PROJECT_ROOT / "failure.txt",
+                Path("/tmp/emergency_restore.log")
+            ]
+            sys.stdout = TeeLogger(log_files, sys.stdout)
+            sys.stderr = TeeLogger(log_files, sys.stderr)
 
         self.crypto = SecureBootstrapCrypto()
         self.detector = SystemDetector()
@@ -684,15 +719,40 @@ class EmergencyRestorer:
         if current_family == 'arch':
             native_pkgs = [p['name'] for p in packages.get('arch_native', []) if 'name' in p]
             aur_pkgs = [p['name'] for p in packages.get('arch_aur', []) if 'name' in p]
+            all_pkgs = [p['name'] for p in packages.get('arch_all', []) if 'name' in p]
+            known_pkg_names = set(native_pkgs) | set(aur_pkgs) | set(all_pkgs)
 
             # 1. Synchronize package databases and upgrade base libraries first (prevents partial upgrade dependency conflicts on rolling Arch/CachyOS)
             print("  🔄 Synchronizing pacman package databases and upgrading system...")
             subprocess.run(['sudo', 'pacman', '-Syu', '--noconfirm'], check=False)
 
-            # Ensure complete compilation, toolchain, and dependency resolvers are present
-            subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm', 'base-devel', 'git', 'debugedit', 'jre17-openjdk'], check=False)
+            # 2. Tier 1: Pre-seed foundational providers & toolchains to eliminate virtual dependency ambiguity
+            print("  🏗️  Pre-seeding foundation virtual providers & compilation toolchains...")
+            foundation_candidates = [
+                # Base development & build toolchains
+                'base-devel', 'git', 'debugedit', 'pacman-contrib', 'reflector',
+                # Java runtime provider (prevents 28-provider selection prompt for java-runtime)
+                'jre17-openjdk', 'jdk17-openjdk',
+                # Audio & multimedia providers (satisfies jack, pipewire-session-manager, phonon)
+                'pipewire', 'pipewire-pulse', 'pipewire-jack', 'pipewire-alsa', 'wireplumber', 'phonon-qt6-vlc',
+                # Graphics & Vulkan providers (satisfies vulkan-driver)
+                'vulkan-icd-loader', 'vulkan-radeon', 'lib32-vulkan-radeon', 'mesa-utils',
+                # Core Typography & Fonts (satisfies ttf-font, emoji-font)
+                'noto-fonts', 'noto-fonts-emoji', 'noto-fonts-cjk', 'ttf-dejavu', 'ttf-liberation', 'ttf-meslo-nerd',
+                # Core Shells, Archivers & Utilities
+                '7zip', 'zstd', 'tar', 'unzip', 'curl', 'wget', 'jq', 'ripgrep', 'fastfetch', 'fish', 'zsh', 'bash-completion'
+            ]
+            # Prioritize foundation candidates that are present in the source machine inventory or essential
+            tier1_to_install = []
+            for pkg in foundation_candidates:
+                if pkg in known_pkg_names or pkg in ['base-devel', 'git', 'debugedit', 'jre17-openjdk']:
+                    tier1_to_install.append(pkg)
 
-            # 2. Check native packages with pacman -T
+            if tier1_to_install:
+                print(f"  📦 Installing {len(tier1_to_install)} foundation provider packages...")
+                subprocess.run(['sudo', 'pacman', '-S', '--needed', '--noconfirm'] + tier1_to_install, input=chr(10)*100, text=True, check=False)
+
+            # 3. Check native packages with pacman -T
             missing_native = []
             if native_pkgs:
                 try:

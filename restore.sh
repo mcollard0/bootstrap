@@ -31,6 +31,14 @@ else
     NC=""
 fi
 
+log_ts() {
+    date '+[%Y-%m-%d %H:%M:%S]'
+}
+
+log_msg() {
+    echo -e "$(log_ts) $1"
+}
+
 # 1. Privilege & sudo helper resolution
 if [ "$EUID" -eq 0 ]; then
     SUDO=""
@@ -45,12 +53,12 @@ RESTORE_PY="$SCRIPT_DIR/src/emergency_restore.py"
 
 # 2. Self-bootstrapping fallback if recovery engine is not found locally
 if [ ! -f "$RESTORE_PY" ]; then
-    echo -e "${YELLOW}⚡ Recovery engine not found at $RESTORE_PY${NC}"
-    echo -e "${CYAN}📥 Standalone mode: Bootstrapping full repository into /tmp/bootstrap...${NC}"
+    log_msg "${YELLOW}⚡ Recovery engine not found at $RESTORE_PY${NC}"
+    log_msg "${CYAN}📥 Standalone mode: Bootstrapping full repository into /tmp/bootstrap...${NC}"
 
     # Ensure git or curl/tar is available
     if ! command -v git >/dev/null 2>&1; then
-        echo -e "  ${YELLOW}📦 git is missing. Attempting automatic installation...${NC}"
+        log_msg "  ${YELLOW}📦 git is missing. Attempting automatic installation...${NC}"
         if command -v pacman >/dev/null 2>&1; then
             $SUDO pacman -Sy --needed --noconfirm git
         elif command -v apt-get >/dev/null 2>&1; then
@@ -69,46 +77,46 @@ if [ ! -f "$RESTORE_PY" ]; then
     mkdir -p /tmp/bootstrap
     if command -v git >/dev/null 2>&1; then
         if [ -d "/tmp/bootstrap/.git" ]; then
-            echo -e "  ${CYAN}🔄 Existing /tmp/bootstrap found; syncing latest changes...${NC}"
+            log_msg "  ${CYAN}🔄 Existing /tmp/bootstrap found; syncing latest changes...${NC}"
             git -C /tmp/bootstrap pull origin main 2>/dev/null || true
         else
-            echo -e "  ${CYAN}🚀 Cloning https://github.com/mcollard0/bootstrap.git...${NC}"
+            log_msg "  ${CYAN}🚀 Cloning https://github.com/mcollard0/bootstrap.git...${NC}"
             rm -rf /tmp/bootstrap
             git clone --depth 1 https://github.com/mcollard0/bootstrap.git /tmp/bootstrap
         fi
     elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
-        echo -e "  ${YELLOW}⚠️ git unavailable; downloading source tarball via curl...${NC}"
+        log_msg "  ${YELLOW}⚠️ git unavailable; downloading source tarball via curl...${NC}"
         rm -rf /tmp/bootstrap
         mkdir -p /tmp/bootstrap
         curl -sSL https://github.com/mcollard0/bootstrap/archive/refs/heads/main.tar.gz | tar -xz -C /tmp/bootstrap --strip-components=1
     else
-        echo -e "${RED}❌ Fatal: Neither git nor curl could download the repository.${NC}" >&2
-        echo -e "   Please install git manually: sudo pacman -S git (or sudo apt install git)" >&2
+        log_msg "${RED}❌ Fatal: Neither git nor curl could download the repository.${NC}" >&2
+        log_msg "   Please install git manually: sudo pacman -S git (or sudo apt install git)" >&2
         exit 1
     fi
 
     if [ -f "/tmp/bootstrap/restore.sh" ]; then
-        echo -e "  ${GREEN}✅ Successfully bootstrapped repository in /tmp/bootstrap.${NC}"
-        echo -e "  ${CYAN}🚀 Transferring execution to /tmp/bootstrap/restore.sh...${NC}\n"
+        log_msg "  ${GREEN}✅ Successfully bootstrapped repository in /tmp/bootstrap.${NC}"
+        log_msg "  ${CYAN}🚀 Transferring execution to /tmp/bootstrap/restore.sh...${NC}\n"
         cd /tmp/bootstrap
         chmod +x /tmp/bootstrap/restore.sh
         exec /tmp/bootstrap/restore.sh "$@"
     else
-        echo -e "${RED}❌ Fatal: Downloaded repository did not contain restore.sh.${NC}" >&2
+        log_msg "${RED}❌ Fatal: Downloaded repository did not contain restore.sh.${NC}" >&2
         exit 1
     fi
 fi
 
-echo -e "${BOLD}${CYAN}======================================================================${NC}"
-echo -e "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
-echo -e "${BOLD}${CYAN}======================================================================${NC}"
+log_msg "${BOLD}${CYAN}======================================================================${NC}"
+log_msg "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
+log_msg "${BOLD}${CYAN}======================================================================${NC}"
 
 # 3. Configure passwordless sudo for target user during disaster recovery
 TARGET_USER="${SUDO_USER:-$USER}"
 if [ -n "$TARGET_USER" ] && [ "$TARGET_USER" != "root" ]; then
     if [ "$EUID" -eq 0 ] || [ -n "$SUDO" ]; then
         if [ ! -f /etc/sudoers.d/99-bootstrap-nopasswd ]; then
-            echo -e "  ${CYAN}🔑 Configuring passwordless sudo for disaster recovery ($TARGET_USER)...${NC}"
+            log_msg "  ${CYAN}🔑 Configuring passwordless sudo for disaster recovery ($TARGET_USER)...${NC}"
             $SUDO mkdir -p /etc/sudoers.d
             TMP_SUDO=$(mktemp)
             cat <<EOF > "$TMP_SUDO"
@@ -123,7 +131,7 @@ EOF
                     $SUDO cp "$TMP_SUDO" /etc/sudoers.d/99-bootstrap-nopasswd
                     $SUDO chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
                 else
-                    echo -e "  ${YELLOW}⚠️  visudo syntax check failed; skipping sudoers modification.${NC}"
+                    log_msg "  ${YELLOW}⚠️  visudo syntax check failed; skipping sudoers modification.${NC}"
                 fi
             else
                 $SUDO cp "$TMP_SUDO" /etc/sudoers.d/99-bootstrap-nopasswd
@@ -136,7 +144,7 @@ fi
 
 # 4. Arch/CachyOS Live USB tmpfs overlay expansion
 if [ -d "/run/archiso/cowspace" ] && [ "$EUID" -eq 0 ]; then
-    echo -e "  ${YELLOW}⚡ Detected Live ISO environment. Expanding cowspace overlay to 32G...${NC}"
+    log_msg "  ${YELLOW}⚡ Detected Live ISO environment. Expanding cowspace overlay to 32G...${NC}"
     mount -o remount,size=32G /run/archiso/cowspace 2>/dev/null || true
 fi
 
@@ -182,14 +190,14 @@ fi
 
 # 4. Auto-install Missing Prerequisites if needed
 if [ "$NEED_PYTHON" = true ] || [ "$NEED_CRYPTO" = true ] || [ "$NEED_TAR" = true ] || [ "$NEED_ZSTD" = true ] || [ "$NEED_CURL" = true ]; then
-    echo -e "  ${YELLOW}📦 Missing prerequisites detected:${NC}"
-    [ "$NEED_PYTHON" = true ] && echo -e "     • Python 3 runtime"
-    [ "$NEED_CRYPTO" = true ] && echo -e "     • Python Cryptography library"
-    [ "$NEED_TAR" = true ]    && echo -e "     • tar archive utility"
-    [ "$NEED_ZSTD" = true ]   && echo -e "     • zstd compression utility"
-    [ "$NEED_CURL" = true ]   && echo -e "     • curl network downloader"
+    log_msg "  ${YELLOW}📦 Missing prerequisites detected:${NC}"
+    [ "$NEED_PYTHON" = true ] && log_msg "     • Python 3 runtime"
+    [ "$NEED_CRYPTO" = true ] && log_msg "     • Python Cryptography library"
+    [ "$NEED_TAR" = true ]    && log_msg "     • tar archive utility"
+    [ "$NEED_ZSTD" = true ]   && log_msg "     • zstd compression utility"
+    [ "$NEED_CURL" = true ]   && log_msg "     • curl network downloader"
 
-    echo -e "  ${CYAN}🚀 Installing missing dependencies via host package manager...${NC}"
+    log_msg "  ${CYAN}🚀 Installing missing dependencies via host package manager...${NC}"
 
     if command -v pacman >/dev/null 2>&1; then
         PACMAN_PKGS=()
@@ -247,7 +255,7 @@ if [ "$NEED_PYTHON" = true ] || [ "$NEED_CRYPTO" = true ] || [ "$NEED_TAR" = tru
             $SUDO apk add --no-cache "${APK_PKGS[@]}"
         fi
     else
-        echo -e "  ${RED}⚠️  No recognized package manager (pacman/apt/dnf/zypper/apk) found.${NC}" >&2
+        log_msg "  ${RED}⚠️  No recognized package manager (pacman/apt/dnf/zypper/apk) found.${NC}" >&2
     fi
 
     # Fallback verification for cryptography
@@ -259,7 +267,7 @@ if [ "$NEED_PYTHON" = true ] || [ "$NEED_CRYPTO" = true ] || [ "$NEED_TAR" = tru
 
     if [ -n "$PYTHON_BIN" ]; then
         if ! "$PYTHON_BIN" -c "import cryptography" 2>/dev/null; then
-            echo -e "  ${YELLOW}⚙️  Distro cryptography package not detected. Attempting pip fallback...${NC}"
+            log_msg "  ${YELLOW}⚙️  Distro cryptography package not detected. Attempting pip fallback...${NC}"
             $SUDO "$PYTHON_BIN" -m pip install cryptography --break-system-packages 2>/dev/null || \
             $SUDO "$PYTHON_BIN" -m pip install cryptography 2>/dev/null || true
         fi
@@ -272,19 +280,19 @@ if command -v python3 >/dev/null 2>&1; then
 elif command -v python >/dev/null 2>&1; then
     FINAL_PYTHON="python"
 else
-    echo -e "${RED}❌ Fatal: Python 3 could not be installed automatically.${NC}" >&2
-    echo -e "   Please install python3 manually and re-run this script." >&2
+    log_msg "${RED}❌ Fatal: Python 3 could not be installed automatically.${NC}" >&2
+    log_msg "   Please install python3 manually and re-run this script." >&2
     exit 1
 fi
 
 if ! "$FINAL_PYTHON" -c "import cryptography" 2>/dev/null; then
-    echo -e "${RED}❌ Fatal: Python 'cryptography' library could not be loaded.${NC}" >&2
-    echo -e "   Install it with: sudo apt install python3-cryptography (or sudo pacman -S python-cryptography)" >&2
+    log_msg "${RED}❌ Fatal: Python 'cryptography' library could not be loaded.${NC}" >&2
+    log_msg "   Install it with: sudo apt install python3-cryptography (or sudo pacman -S python-cryptography)" >&2
     exit 1
 fi
 
-echo -e "  ${GREEN}✅ Prerequisites verified (Python 3, cryptography, zstd, tar, curl).${NC}"
-echo -e "${BOLD}${CYAN}======================================================================${NC}\n"
+log_msg "  ${GREEN}✅ Prerequisites verified (Python 3, cryptography, zstd, tar, curl).${NC}"
+log_msg "${BOLD}${CYAN}======================================================================${NC}\n"
 
 # 6. Transfer control to the Python recovery engine
 exec "$FINAL_PYTHON" "$RESTORE_PY" "$@"

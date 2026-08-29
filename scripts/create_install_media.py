@@ -31,6 +31,7 @@ import shutil
 import argparse
 import subprocess
 import tempfile
+import datetime
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -55,20 +56,24 @@ BACKUP_ARCHIVE_DIR = Path("/run/media/michael/FAST_ARCHIVE/SystemBackups")
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; UniversalLinuxBootstrap)"}
 
 
+def _ts() -> str:
+    return datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+
+
 def log_info(msg: str):
-    print(f"  {BLUE}ℹ️  [INFO]{NC} {msg}")
+    print(f"{_ts()}{BLUE}ℹ️  [INFO]{NC} {msg}")
 
 
 def log_success(msg: str):
-    print(f"  {GREEN}✅ [SUCCESS]{NC} {msg}")
+    print(f"{_ts()}{GREEN}✅ [SUCCESS]{NC} {msg}")
 
 
 def log_warn(msg: str):
-    print(f"  {YELLOW}⚠️  [WARN]{NC} {msg}")
+    print(f"{_ts()}{YELLOW}⚠️  [WARN]{NC} {msg}")
 
 
 def log_error(msg: str):
-    print(f"  {RED}❌ [ERROR]{NC} {msg}", file=sys.stderr)
+    print(f"{_ts()}{RED}❌ [ERROR]{NC} {msg}", file=sys.stderr)
 
 
 def print_banner():
