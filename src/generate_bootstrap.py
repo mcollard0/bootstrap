@@ -22,6 +22,7 @@ if str(SRC_DIR) not in sys.path:
 
 from system_detector import SystemDetector
 from crypto_utils import SecureBootstrapCrypto
+from version import __version__, get_full_program_name
 
 
 class UniversalBootstrapScriptGenerator:
@@ -272,7 +273,9 @@ main "$@"
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal Bootstrap Restoration Script Generator")
+    prog_title = get_full_program_name("Restoration Script Generator")
+    parser = argparse.ArgumentParser(description=prog_title)
+    parser.add_argument('--version', '-v', action='version', version=prog_title)
     parser.add_argument('--output', type=str, default='bootstrap.sh', help="Output filename in scripts/")
 
     args = parser.parse_args()

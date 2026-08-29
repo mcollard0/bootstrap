@@ -53,6 +53,11 @@ DEFAULT_CACHE_DIR = Path("/run/media/michael/FAST_ARCHIVE/VM/IMAGES")
 LOCAL_CACHE_DIR = REPO_ROOT / "data" / "iso_cache"
 BACKUP_ARCHIVE_DIR = Path("/run/media/michael/FAST_ARCHIVE/SystemBackups")
 
+if str(REPO_ROOT / 'src') not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / 'src'))
+
+from version import __version__, get_full_program_name
+
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; UniversalLinuxBootstrap)"}
 
 
@@ -77,8 +82,9 @@ def log_error(msg: str):
 
 
 def print_banner():
+    prog_title = get_full_program_name("Install & Recovery Media Creator")
     print(f"{BOLD}{CYAN}======================================================================{NC}")
-    print(f"{BOLD}{CYAN}  🛠️  Universal Linux Bootstrap - Install & Recovery Media Creator   {NC}")
+    print(f"{BOLD}{CYAN}  🛠️  {prog_title}   {NC}")
     print(f"{BOLD}{CYAN}======================================================================{NC}")
     print("  Provisions a dual-volume bootable USB drive:")
     print(f"    • {BOLD}Volume 1 (Installer){NC}: UEFI bootable Linux OS installer (dynamic online check)")
@@ -726,7 +732,9 @@ def run_pre_provisioning_backup(skip_backup: bool = False):
 # ------------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal Linux Bootstrap - Install & Recovery Media Creator")
+    prog_title = get_full_program_name("Install & Recovery Media Creator")
+    parser = argparse.ArgumentParser(description=prog_title)
+    parser.add_argument('--version', '-v', action='version', version=prog_title)
     parser.add_argument("--dev", help="Target USB block device (e.g. /dev/sdb)")
     parser.add_argument("--iso", help="Path to local ISO file (skips online query)")
     parser.add_argument("--distro", type=int, choices=range(1, 9), help="Preset distribution number (1-8)")

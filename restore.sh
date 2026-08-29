@@ -31,6 +31,14 @@ else
     NC=""
 fi
 
+VERSION="0.0.1"
+PROGRAM_NAME="Universal Linux Bootstrap - Disaster Recovery Pre-Flight & Launcher v${VERSION}"
+
+if [[ "$1" == "--version" || "$1" == "-v" ]]; then
+    echo "$PROGRAM_NAME"
+    exit 0
+fi
+
 log_ts() {
     date '+[%Y-%m-%d %H:%M:%S]'
 }
@@ -108,7 +116,7 @@ if [ ! -f "$RESTORE_PY" ]; then
 fi
 
 log_msg "${BOLD}${CYAN}======================================================================${NC}"
-log_msg "${BOLD}${CYAN}   Universal Linux Bootstrap - Disaster Recovery Pre-Flight           ${NC}"
+log_msg "${BOLD}${CYAN}   $PROGRAM_NAME           ${NC}"
 log_msg "${BOLD}${CYAN}======================================================================${NC}"
 
 # 3. Configure passwordless sudo for target user during disaster recovery

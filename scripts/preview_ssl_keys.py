@@ -8,11 +8,27 @@ import json
 import sys
 import os
 import subprocess
+from pathlib import Path
+
+SRC_DIR = Path(__file__).parent.parent / 'src'
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+try:
+    from version import __version__, get_full_program_name
+except ImportError:
+    __version__ = "0.0.1"
+    def get_full_program_name(name): return f"Universal Linux Bootstrap - {name} v{__version__}"
 
 def main():
-    print( "🔍 SSL Key Addition Preview (Dry Run)" );
-    print( "=" * 50 );
-    print();
+    prog_title = get_full_program_name("SSL Key Inspection Utility")
+    if len(sys.argv) > 1 and sys.argv[1] in ['--version', '-v']:
+        print(prog_title)
+        return 0
+
+    print(f"🔍 {prog_title} (Dry Run)")
+    print("=" * 50)
+    print()
     
     # Check current encrypted_secrets.json
     script_dir = os.path.dirname( os.path.abspath( __file__ ) );

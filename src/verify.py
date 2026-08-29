@@ -26,6 +26,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from crypto_utils import SecureBootstrapCrypto, prompt_for_password
+from version import __version__, get_full_program_name
 
 # Colors for terminal output
 GREEN = '\033[0;32m'
@@ -79,8 +80,9 @@ def verify_vault(vault_path: Path, password: str, full_hashes: Optional[bool] = 
         term_cols = shutil.get_terminal_size((120, 24)).columns
         full_hashes = term_cols >= 150
 
+    program_title = get_full_program_name("Vault Verification Tool")
     print(f"\n{BOLD}{BLUE}========================================================================{NC}")
-    print(f"{BOLD}🔐 Bootstrap Vault Integrity & Checksum Verifier{NC}")
+    print(f"{BOLD}🔐 {program_title}{NC}")
     print(f"{BOLD}{BLUE}========================================================================{NC}")
     print(f"Target Vault: {CYAN}{vault_path.name}{NC}")
     print(f"Location:     {vault_path}")
@@ -195,7 +197,9 @@ def verify_vault(vault_path: Path, password: str, full_hashes: Optional[bool] = 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bootstrap Encrypted Vault Verification Tool")
+    program_title = get_full_program_name("Vault Verification Tool")
+    parser = argparse.ArgumentParser(description=program_title)
+    parser.add_argument('--version', '-v', action='version', version=program_title)
     parser.add_argument('--vault', type=str, default=None, help="Path to encrypted vault (.tar.zst.enc / .tar.enc)")
     parser.add_argument('--password', '-p', type=str, default=None, help="Master password (or auto-resolved from vault.env / env)")
     parser.add_argument('--full', action='store_true', help="Display full 64-char SHA-256 and 40-char SHA-1 hashes")

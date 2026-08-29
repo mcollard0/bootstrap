@@ -7,12 +7,19 @@
 
 set -euo pipefail
 
-# Colors
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
+
+readonly VERSION="0.0.1"
+readonly PROGRAM_NAME="Universal Linux Bootstrap - Automated System Provisioner v${VERSION}"
+
+if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
+    echo "$PROGRAM_NAME"
+    exit 0
+fi
 
 log_ts() {
     date '+[%Y-%m-%d %H:%M:%S]'
@@ -32,7 +39,7 @@ check_sudo() {
 }
 
 main() {
-    log_info "🚀 Starting Arch / CachyOS Bootstrap Restoration"
+    log_info "🚀 Starting $PROGRAM_NAME"
     log_info "==============================================="
     check_sudo
 

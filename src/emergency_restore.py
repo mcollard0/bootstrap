@@ -62,6 +62,7 @@ except ImportError:
 
 from crypto_utils import SecureBootstrapCrypto, prompt_for_password
 from system_detector import SystemDetector
+from version import __version__, get_full_program_name
 
 # Colors
 GREEN = '\033[0;32m'
@@ -75,9 +76,10 @@ NC = '\033[0m'
 
 def print_emergency_banner():
     """Display prominent emergency restoration banner."""
+    prog_title = get_full_program_name("Emergency Disaster Recovery Engine")
     banner = f"""
 {RED}{BOLD}╔══════════════════════════════════════════════════════════════════════════════════════╗
-║               🆘 UNIVERSAL LINUX EMERGENCY SYSTEM RESTORATION 🆘                     ║
+║               🆘 {prog_title.upper()} 🆘
 ╠══════════════════════════════════════════════════════════════════════════════════════╣{NC}
 ║ {BOLD}Disaster Recovery & Vault Unpacking Engine{NC}                                           ║
 ║                                                                                      ║
@@ -1375,7 +1377,9 @@ def find_latest_vault() -> Optional[Path]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal Linux Bootstrap - Emergency System Restoration Tool")
+    prog_title = get_full_program_name("Emergency Disaster Recovery Engine")
+    parser = argparse.ArgumentParser(description=prog_title)
+    parser.add_argument('--version', '-v', action='version', version=prog_title)
     parser.add_argument('--vault', type=str, help="Path to encrypted vault (.tar.zst.enc / .tar.enc)")
     parser.add_argument('--user', type=str, default=None, help="Target username (default: current user)")
     parser.add_argument('--password', '-p', type=str, default=None, help="Vault decryption password (or set BOOTSTRAP_SECRET env var)")

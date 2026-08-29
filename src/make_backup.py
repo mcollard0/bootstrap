@@ -7,10 +7,17 @@ Follows user preferences for backup naming and retention limits.
 """
 
 import os;
+import sys;
 import shutil;
 import datetime;
 from pathlib import Path;
 from typing import List, Dict, Tuple;
+
+SRC_DIR = Path(__file__).parent;
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR));
+
+from version import __version__, get_full_program_name;
 
 
 class BootstrapBackupManager:
@@ -284,8 +291,13 @@ class BootstrapBackupManager:
 
 def main():
     """Main backup execution."""
-    print( "🚀 Ubuntu Bootstrap Backup Manager" );
-    print( "==================================\\n" );
+    prog_title = get_full_program_name("System Backup Creator");
+    if len(sys.argv) > 1 and sys.argv[1] in ['--version', '-v']:
+        print(prog_title);
+        return;
+
+    print(f"🚀 {prog_title}");
+    print("==================================\n");
     
     backup_manager = BootstrapBackupManager();
     

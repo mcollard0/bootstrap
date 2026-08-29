@@ -16,12 +16,18 @@ if str(SRC_DIR) not in sys.path:
 
 try:
     from crypto_utils import SecureBootstrapCrypto, prompt_for_password
+    from version import __version__, get_full_program_name
 except ImportError:
-    print("Error: Could not import crypto_utils. Please ensure it's in ../src/")
+    print("Error: Could not import crypto_utils or version. Please ensure it's in ../src/")
     sys.exit(1)
 
 
 def main():
+    prog_title = get_full_program_name("Secret Decryption Utility")
+    if '--version' in sys.argv or '-v' in sys.argv:
+        print(prog_title)
+        return
+
     secrets_file = SCRIPT_DIR.parent / "data/encrypted_secrets.json"
     restore_files = '--restore-files' in sys.argv or '-f' in sys.argv
     list_secrets = '--list-secrets' in sys.argv

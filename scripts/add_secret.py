@@ -19,13 +19,16 @@ if str(SRC_DIR) not in sys.path:
 
 try:
     from crypto_utils import SecureBootstrapCrypto, prompt_for_password
+    from version import __version__, get_full_program_name
 except ImportError:
-    print("Error: Could not import crypto_utils. Please ensure it's in ../src/")
+    print("Error: Could not import crypto_utils or version. Please ensure it's in ../src/")
     sys.exit(1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Add secrets, credentials, and files to encrypted secrets storage')
+    prog_title = get_full_program_name("Secret Management Tool")
+    parser = argparse.ArgumentParser(description=prog_title)
+    parser.add_argument('--version', '-v', action='version', version=prog_title)
     parser.add_argument('--add-fstab', action='store_true', help='Add /etc/fstab as archive-only file')
     parser.add_argument('--add-ssl-keys', action='store_true', help='Add SSL private keys from /etc/ssl/private/')
     parser.add_argument('--files', nargs='*', help='Additional files to encrypt')

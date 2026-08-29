@@ -29,6 +29,7 @@ if str(SRC_DIR) not in sys.path:
 
 from system_detector import SystemDetector
 from crypto_utils import SecureBootstrapCrypto, prompt_for_password, HAS_ZSTD
+from version import __version__, get_full_program_name
 from scanners import (
     DistroPackageScanner,
     ShellScanner,
@@ -260,6 +261,8 @@ class UniversalSystemScanner:
 
     def run(self, encrypt_and_dispatch: bool = True, custom_password: str = None) -> Dict[str, Any]:
         """Execute full scan, vault generation, and storage dispatch."""
+        prog_title = get_full_program_name("System Scanner & Vault Creator")
+        print(f"\n🔍 {prog_title}")
         self.detector.print_summary()
         echo_sep = "=" * 50
         print(f"\n{echo_sep}")
@@ -325,7 +328,9 @@ class UniversalSystemScanner:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Universal System Scanner & Encrypted Vault Backup")
+    prog_title = get_full_program_name("System Scanner & Vault Creator")
+    parser = argparse.ArgumentParser(description=prog_title)
+    parser.add_argument('--version', '-v', action='version', version=prog_title)
     parser.add_argument('--no-encrypt', action='store_true', help="Only scan inventory without building encrypted vault")
     parser.add_argument('--password', type=str, default=None, help="Master password for non-interactive backup")
     parser.add_argument('--base-dir', type=str, default=None, help="Base directory override")

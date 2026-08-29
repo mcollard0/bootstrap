@@ -19,6 +19,12 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+SRC_DIR = Path(__file__).parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from version import __version__, get_full_program_name
+
 
 class SystemDetector:
     """Detects host operating system, hardware, shells, and package manager capabilities."""
@@ -207,7 +213,8 @@ class SystemDetector:
 
     def print_summary(self):
         """Print user-friendly system summary."""
-        print("🖥️  System & Environment Detection:")
+        prog_title = get_full_program_name("System & Environment Detector")
+        print(f"🖥️  {prog_title}:")
         print(f"   Distribution: {self.os_info['pretty_name']} (Family: {self.os_info['family'].upper()})")
         print(f"   Kernel:       {self.os_info['kernel']}")
         print(f"   Hostname:     {self.os_info['hostname']}")
@@ -223,5 +230,8 @@ class SystemDetector:
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] in ['--version', '-v']:
+        print(get_full_program_name("System & Environment Detector"))
+        sys.exit(0)
     detector = SystemDetector()
     detector.print_summary()
