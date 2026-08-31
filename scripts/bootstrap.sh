@@ -1,34 +1,23 @@
 #!/bin/bash
 #
 # Arch Linux / CachyOS Bootstrap Restoration Script
-# Generated: 2026-08-27T20:00:42.670690
+# Generated: 2026-08-30T20:05:34.858909
 # Source System: CachyOS
 #
 
 set -euo pipefail
 
+# Colors
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
 
-readonly VERSION="0.0.1"
-readonly PROGRAM_NAME="Universal Linux Bootstrap - Automated System Provisioner v${VERSION}"
-
-if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
-    echo "$PROGRAM_NAME"
-    exit 0
-fi
-
-log_ts() {
-    date '+[%Y-%m-%d %H:%M:%S]'
-}
-
-log_info() { echo -e "$(log_ts) ${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "$(log_ts) ${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "$(log_ts) ${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "$(log_ts) ${RED}[ERROR]${NC} $1"; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 check_sudo() {
     if [[ $EUID -ne 0 ]]; then
@@ -39,7 +28,7 @@ check_sudo() {
 }
 
 main() {
-    log_info "🚀 Starting $PROGRAM_NAME"
+    log_info "🚀 Starting Arch / CachyOS Bootstrap Restoration"
     log_info "==============================================="
     check_sudo
 
@@ -50,35 +39,9 @@ main() {
     log_info "User Home:   $USER_HOME"
     echo
 
-    # 0. Ensure passwordless sudo for target user during automated restoration
-    if [[ -n "$TARGET_USER" && "$TARGET_USER" != "root" ]]; then
-        if [[ ! -f /etc/sudoers.d/99-bootstrap-nopasswd ]]; then
-            log_info "🔑 Configuring passwordless sudo for $TARGET_USER..."
-            mkdir -p /etc/sudoers.d
-            local tmp_sudo=$(mktemp)
-            cat <<EOF > "$tmp_sudo"
-# Created by Universal Linux Bootstrap
-%wheel ALL=(ALL:ALL) NOPASSWD: ALL
-%sudo ALL=(ALL:ALL) NOPASSWD: ALL
-$TARGET_USER ALL=(ALL:ALL) NOPASSWD: ALL
-EOF
-            chmod 0440 "$tmp_sudo"
-            if command -v visudo >/dev/null 2>&1; then
-                if visudo -cf "$tmp_sudo" >/dev/null 2>&1; then
-                    cp "$tmp_sudo" /etc/sudoers.d/99-bootstrap-nopasswd
-                    chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
-                fi
-            else
-                cp "$tmp_sudo" /etc/sudoers.d/99-bootstrap-nopasswd
-                chmod 0440 /etc/sudoers.d/99-bootstrap-nopasswd
-            fi
-            rm -f "$tmp_sudo"
-        fi
-    fi
-
-    # 1. Update package databases and pre-seed foundation virtual providers
-    log_info "📦 Synchronizing pacman mirrors and pre-seeding foundation providers..."
-    pacman -Sy --needed --noconfirm base-devel git curl wget debugedit jre17-openjdk pipewire-jack wireplumber vulkan-radeon noto-fonts
+    # 1. Update package databases and install base development tools
+    log_info "📦 Synchronizing pacman mirrors and installing base-devel..."
+    pacman -Sy --needed --noconfirm base-devel git curl wget
 
     # 2. Recreate mount points for external archive drives
     log_info "💾 Ensuring archive drive mount directories exist..."
