@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Arch Linux / CachyOS Bootstrap Restoration Script
-# Generated: 2026-09-07T03:00:26.954100
+# Generated: 2026-09-07T03:09:27.072567
 # Source System: CachyOS
 #
 
